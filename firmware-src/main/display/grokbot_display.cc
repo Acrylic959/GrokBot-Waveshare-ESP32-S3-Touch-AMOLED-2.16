@@ -398,46 +398,46 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_obj_set_style_opa(pet_panel_, LV_OPA_TRANSP, 0);
     lv_obj_add_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN);
 
-    // ---- Header: title + six live status bars -----------------------------
-    lv_obj_t* header = lv_obj_create(pet_panel_);
-    lv_obj_set_size(header, LV_HOR_RES - 48, 176);
-    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 16);
-    lv_obj_set_style_bg_color(header, lv_color_hex(0x141826), 0);
-    lv_obj_set_style_bg_opa(header, LV_OPA_80, 0);
-    lv_obj_set_style_border_color(header, lv_color_hex(0x3a4566), 0);
-    lv_obj_set_style_border_width(header, 2, 0);
-    lv_obj_set_style_radius(header, 16, 0);
-    lv_obj_set_style_pad_all(header, 12, 0);
-    lv_obj_set_scrollbar_mode(header, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-
-    pet_title_ = lv_label_create(header);
-    lv_obj_set_width(pet_title_, LV_HOR_RES - 80);
+    // ---- Title: compact, top-centre inside the round safe area ------------
+    pet_title_ = lv_label_create(pet_panel_);
+    lv_obj_set_width(pet_title_, 360);
     lv_label_set_text(pet_title_, "小何 Lv.1 宝宝  互动 0");
     lv_obj_set_style_text_color(pet_title_, lv_color_hex(0x9fd8ff), 0);
     lv_obj_set_style_text_align(pet_title_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 74);
+    lv_obj_set_style_bg_color(pet_title_, lv_color_hex(0x0b1020), 0);
+    lv_obj_set_style_bg_opa(pet_title_, LV_OPA_60, 0);
+    lv_obj_set_style_radius(pet_title_, 10, 0);
+    lv_obj_set_style_pad_all(pet_title_, 4, 0);
 
+    // ---- Six status bars: 3 on the left, 3 on the right --------------------
+    // The photo showed a full-width header covering the character's face.  By
+    // moving the slim bars to both sides the centre stays completely clear,
+    // so the animated GrokBot is never blocked while playing.
     for (int i = 0; i < 6; ++i) {
-        const int row = i / 2;
-        const int col = i % 2;
-        lv_obj_t* row_obj = lv_obj_create(header);
-        lv_obj_set_size(row_obj, (LV_HOR_RES - 96) / 2, 40);
-        lv_obj_align(row_obj, LV_ALIGN_TOP_LEFT, 8 + col * ((LV_HOR_RES - 96) / 2 + 8),
-                     28 + row * 44);
-        lv_obj_set_style_bg_opa(row_obj, LV_OPA_TRANSP, 0);
+        const int side = i / 3;   // 0 = left, 1 = right
+        const int row = i % 3;
+        const int y = 150 + row * 58;
+        const int x = side == 0 ? 56 : LV_HOR_RES - 56 - 128;
+
+        lv_obj_t* row_obj = lv_obj_create(pet_panel_);
+        lv_obj_set_size(row_obj, 128, 50);
+        lv_obj_align(row_obj, LV_ALIGN_TOP_LEFT, x, y);
+        lv_obj_set_style_bg_color(row_obj, lv_color_hex(0x0b1020), 0);
+        lv_obj_set_style_bg_opa(row_obj, LV_OPA_50, 0);
         lv_obj_set_style_border_width(row_obj, 0, 0);
-        lv_obj_set_style_pad_all(row_obj, 0, 0);
+        lv_obj_set_style_radius(row_obj, 8, 0);
+        lv_obj_set_style_pad_all(row_obj, 4, 0);
         lv_obj_clear_flag(row_obj, LV_OBJ_FLAG_SCROLLABLE);
 
         lv_obj_t* name = lv_label_create(row_obj);
         lv_label_set_text(name, kPetStatLabels[i]);
         lv_obj_set_style_text_color(name, lv_color_hex(0xd8e2f5), 0);
-        lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, -8);
+        lv_obj_align(name, LV_ALIGN_TOP_LEFT, 6, 1);
 
         lv_obj_t* bar = lv_bar_create(row_obj);
-        lv_obj_set_size(bar, (LV_HOR_RES - 96) / 2 - 4, 12);
-        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+        lv_obj_set_size(bar, 112, 12);
+        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, 6, -4);
         lv_bar_set_range(bar, 0, 100);
         lv_obj_set_style_bg_color(bar, lv_color_hex(0x2a3046), 0);
         lv_obj_set_style_bg_color(bar, lv_color_hex(0x5fd0a8), LV_PART_INDICATOR);
@@ -447,22 +447,25 @@ void GrokbotDisplay::InitializePetPanel() {
     }
 
     pet_feedback_ = lv_label_create(pet_panel_);
-    lv_obj_set_width(pet_feedback_, LV_HOR_RES - 80);
+    lv_obj_set_width(pet_feedback_, 320);
     lv_obj_set_style_text_color(pet_feedback_, lv_color_hex(0xffe08a), 0);
     lv_obj_set_style_text_align(pet_feedback_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pet_feedback_, LV_ALIGN_BOTTOM_MID, 0, 158);
+    lv_obj_align(pet_feedback_, LV_ALIGN_BOTTOM_MID, 0, -132);
     lv_label_set_text(pet_feedback_, "");
     lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
 
-    // ---- Footer: six touch buttons ----------------------------------------
+    // ---- Footer: six large buttons in ONE row inside the round safe area ----
+    // Previous two-row layout pushed the second row past the 48 px corner cut
+    // (only 3 buttons were visible).  A single row of 6 x 66 px fits within
+    // x=[60,420] and is large enough for reliable touch.
     static const char* kActions[6] = {"投喂", "玩耍", "抚摸", "清洁", "探险", "睡觉"};
     for (int i = 0; i < 6; ++i) {
-        const int row = i / 3;
-        const int col = i % 3;
         lv_obj_t* button = lv_btn_create(pet_panel_);
-        lv_obj_set_size(button, 132, 52);
+        lv_obj_set_size(button, 66, 66);
+        // Negative Y = upward from the bottom edge.  Positive values push
+        // buttons off-screen (root cause of the "only 3 buttons visible" bug).
         lv_obj_align(button, LV_ALIGN_BOTTOM_MID,
-                     (col - 1) * 142, 78 - row * 60);
+                     (i - 2) * 70, -56);
         lv_obj_set_style_radius(button, 14, 0);
         lv_obj_set_style_bg_color(button, lv_color_hex(0x2b3a5c), 0);
         lv_obj_set_style_bg_color(button, lv_color_hex(0x3f6fa8), LV_STATE_PRESSED);
@@ -950,6 +953,17 @@ void GrokbotDisplay::AnimationTask() {
         // Overlay fade + live stat bars are driven from the same task that
         // decodes the character, so UI transitions never block or restart the
         // animation.
+        // Voice wake-up must fade the pet overlay back to home.  Polling the
+        // atomic status here (rather than relying only on SetStatus timing)
+        // guarantees it fires even when the state machine changes status from
+        // another task while the animation loop is running.
+        if (pet_mode_active_.load()) {
+            const char* st = requested_status_.load();
+            if (st != nullptr && strcmp(st, "listening") == 0) {
+                SetPetMode(false);
+                ESP_LOGI(TAG, "Voice wake-up detected in animation loop -> pet panel fading out");
+            }
+        }
         UpdatePetPanelFade();
         const int64_t ui_now = NowUs();
         if (pet_mode_active_.load() && ui_now - last_pet_ui_us > 1000000LL) {

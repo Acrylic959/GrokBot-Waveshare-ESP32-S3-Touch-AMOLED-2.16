@@ -36,6 +36,7 @@ public:
     // never freezes or restarts when switching views.
     void SetPetMode(bool active);
     void TogglePetMode();
+    void TriggerPetAction(int action) { OnPetAction(action); }
     bool IsPetModeActive() const { return pet_mode_active_.load(); }
 
 private:
