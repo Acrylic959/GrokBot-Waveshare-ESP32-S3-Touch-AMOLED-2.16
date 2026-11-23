@@ -345,13 +345,15 @@ void GrokbotDisplay::SetupUI() {
 //
 // The pet character is ONE image object living in emoji_box_.  Switching
 // views must never delete/recreate it, otherwise the 30 FPS animation would
-// visibly stutter.  Instead a full-screen overlay is created on top of the
-// screen: an opaque header strip (stats), an opaque footer strip (buttons),
-// and a completely transparent middle window through which the same animated
-// character keeps playing without interruption.
+// visibly stutter.  The overlay is a Pokémon-style status frame: only Lv. and
+// body type at the very top, four slim stat bars forming a complete ring
+// around the screen edges, and a compact 3x2 action menu at the bottom.  The
+// middle stays transparent so the same animated character keeps playing.
 // ---------------------------------------------------------------------------
 namespace {
-constexpr const char* kPetStatLabels[6] = {"心情", "饱腹", "活力", "健康", "清洁", "乐趣"};
+constexpr const char* kPetStatLabels[4] = {"心情", "健康", "饱腹", "清洁"};
+// PetState stores six stats; the pet screen deliberately shows only these four.
+constexpr int kPetStatStateIndex[4] = {0, 3, 1, 4};  // mood, health, satiety, hygiene
 constexpr int kPetFadeStep = 26;  // ~10 frames at 30 FPS => ~330 ms fade
 }  // namespace
 
@@ -398,78 +400,101 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_obj_set_style_opa(pet_panel_, LV_OPA_TRANSP, 0);
     lv_obj_add_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN);
 
-    // ---- Title: compact, top-centre inside the round safe area ------------
+    // ---- Top badge: LEVEL + BODY TYPE only (no name, no bond count) --------
     pet_title_ = lv_label_create(pet_panel_);
-    lv_obj_set_width(pet_title_, 360);
-    lv_label_set_text(pet_title_, "小何 Lv.1 宝宝  互动 0");
-    lv_obj_set_style_text_color(pet_title_, lv_color_hex(0x9fd8ff), 0);
+    lv_obj_set_width(pet_title_, 180);
+    lv_label_set_text(pet_title_, "Lv.1 · 体型 宝宝");
+    lv_obj_set_style_text_color(pet_title_, lv_color_hex(0xbfe9ff), 0);
     lv_obj_set_style_text_align(pet_title_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 74);
-    lv_obj_set_style_bg_color(pet_title_, lv_color_hex(0x0b1020), 0);
-    lv_obj_set_style_bg_opa(pet_title_, LV_OPA_60, 0);
-    lv_obj_set_style_radius(pet_title_, 10, 0);
-    lv_obj_set_style_pad_all(pet_title_, 4, 0);
+    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 56);
+    lv_obj_set_style_bg_color(pet_title_, lv_color_hex(0x1b2b4a), 0);
+    lv_obj_set_style_bg_opa(pet_title_, LV_OPA_80, 0);
+    lv_obj_set_style_radius(pet_title_, 14, 0);
+    lv_obj_set_style_pad_all(pet_title_, 6, 0);
 
-    // ---- Six status bars: 3 on the left, 3 on the right --------------------
-    // The photo showed a full-width header covering the character's face.  By
-    // moving the slim bars to both sides the centre stays completely clear,
-    // so the animated GrokBot is never blocked while playing.
-    for (int i = 0; i < 6; ++i) {
-        const int side = i / 3;   // 0 = left, 1 = right
-        const int row = i % 3;
-        const int y = 150 + row * 58;
-        const int x = side == 0 ? 56 : LV_HOR_RES - 56 - 128;
-
-        lv_obj_t* row_obj = lv_obj_create(pet_panel_);
-        lv_obj_set_size(row_obj, 128, 50);
-        lv_obj_align(row_obj, LV_ALIGN_TOP_LEFT, x, y);
-        lv_obj_set_style_bg_color(row_obj, lv_color_hex(0x0b1020), 0);
-        lv_obj_set_style_bg_opa(row_obj, LV_OPA_50, 0);
-        lv_obj_set_style_border_width(row_obj, 0, 0);
-        lv_obj_set_style_radius(row_obj, 8, 0);
-        lv_obj_set_style_pad_all(row_obj, 4, 0);
-        lv_obj_clear_flag(row_obj, LV_OBJ_FLAG_SCROLLABLE);
-
-        lv_obj_t* name = lv_label_create(row_obj);
-        lv_label_set_text(name, kPetStatLabels[i]);
-        lv_obj_set_style_text_color(name, lv_color_hex(0xd8e2f5), 0);
-        lv_obj_align(name, LV_ALIGN_TOP_LEFT, 6, 1);
-
-        lv_obj_t* bar = lv_bar_create(row_obj);
-        lv_obj_set_size(bar, 112, 12);
-        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, 6, -4);
+    // ---- Four edge bars forming one complete status ring -------------------
+    // mood = top, health = right, satiety = bottom, clean = left.
+    // All bars stay on the outer frame so the character's face/body are clear.
+    const lv_color_t stat_colors[4] = {
+        lv_color_hex(0x6ad3ff),  // mood
+        lv_color_hex(0xff8fa3),  // health
+        lv_color_hex(0xffd166),  // satiety
+        lv_color_hex(0x8be28b),  // clean
+    };
+    const int bar_x[4] = {60, 408, 60, 60};
+    const int bar_y[4] = {96, 102, 438, 102};
+    const int bar_w[4] = {360, 12, 360, 12};
+    const int bar_h[4] = {12, 330, 12, 330};
+    for (int i = 0; i < 4; ++i) {
+        lv_obj_t* bar = lv_bar_create(pet_panel_);
+        lv_obj_set_size(bar, bar_w[i], bar_h[i]);
+        lv_obj_align(bar, LV_ALIGN_TOP_LEFT, bar_x[i], bar_y[i]);
+        if (i == 1 || i == 3) {
+            lv_bar_set_orientation(bar, LV_BAR_ORIENTATION_VERTICAL);
+        }
         lv_bar_set_range(bar, 0, 100);
-        lv_obj_set_style_bg_color(bar, lv_color_hex(0x2a3046), 0);
-        lv_obj_set_style_bg_color(bar, lv_color_hex(0x5fd0a8), LV_PART_INDICATOR);
+        lv_bar_set_value(bar, 70, LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(bar, lv_color_hex(0x24304d), 0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_80, 0);
+        lv_obj_set_style_bg_color(bar, stat_colors[i], LV_PART_INDICATOR);
         lv_obj_set_style_radius(bar, 6, 0);
         lv_obj_set_style_pad_all(bar, 0, 0);
+        lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
         pet_bars_[i] = bar;
     }
 
+    // Small corner caps make the four straight bars read as one closed ring.
+    const int cap_x[4] = {60, 408, 60, 408};
+    const int cap_y[4] = {96, 96, 438, 438};
+    for (int i = 0; i < 4; ++i) {
+        lv_obj_t* cap = lv_obj_create(pet_panel_);
+        lv_obj_set_size(cap, 12, 12);
+        lv_obj_align(cap, LV_ALIGN_TOP_LEFT, cap_x[i], cap_y[i]);
+        lv_obj_set_style_bg_color(cap, lv_color_hex(0x9bd8ff), 0);
+        lv_obj_set_style_bg_opa(cap, LV_OPA_70, 0);
+        lv_obj_set_style_border_width(cap, 0, 0);
+        lv_obj_set_style_radius(cap, 6, 0);
+        lv_obj_clear_flag(cap, LV_OBJ_FLAG_SCROLLABLE);
+    }
+
+    // Labels sit just inside the ring, one per side.
+    const int label_x[4] = {72, 372, 372, 72};
+    const int label_y[4] = {112, 112, 418, 240};
+    for (int i = 0; i < 4; ++i) {
+        lv_obj_t* label = lv_label_create(pet_panel_);
+        lv_label_set_text(label, kPetStatLabels[i]);
+        lv_obj_set_style_text_color(label, stat_colors[i], 0);
+        lv_obj_align(label, LV_ALIGN_TOP_LEFT, label_x[i], label_y[i]);
+    }
+
     pet_feedback_ = lv_label_create(pet_panel_);
-    lv_obj_set_width(pet_feedback_, 320);
+    lv_obj_set_width(pet_feedback_, 280);
     lv_obj_set_style_text_color(pet_feedback_, lv_color_hex(0xffe08a), 0);
     lv_obj_set_style_text_align(pet_feedback_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pet_feedback_, LV_ALIGN_BOTTOM_MID, 0, -132);
+    lv_obj_align(pet_feedback_, LV_ALIGN_TOP_MID, 0, 286);
     lv_label_set_text(pet_feedback_, "");
     lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
 
-    // ---- Footer: six large buttons in ONE row inside the round safe area ----
-    // Previous two-row layout pushed the second row past the 48 px corner cut
-    // (only 3 buttons were visible).  A single row of 6 x 66 px fits within
-    // x=[60,420] and is large enough for reliable touch.
+    // ---- Pokémon-style action menu: 3 x 2 rounded buttons, bottom centre ----
+    // 84x52 with 12px gaps => total 276x116, safely inside the round corners.
     static const char* kActions[6] = {"投喂", "玩耍", "抚摸", "清洁", "探险", "睡觉"};
+    const lv_color_t button_border[6] = {
+        lv_color_hex(0x6ad3ff), lv_color_hex(0xffd166), lv_color_hex(0xff9ec7),
+        lv_color_hex(0x8be28b), lv_color_hex(0xb39cff), lv_color_hex(0x9fb3c8),
+    };
     for (int i = 0; i < 6; ++i) {
+        const int col = i % 3;
+        const int row = i / 3;
         lv_obj_t* button = lv_btn_create(pet_panel_);
-        lv_obj_set_size(button, 66, 66);
-        // Negative Y = upward from the bottom edge.  Positive values push
-        // buttons off-screen (root cause of the "only 3 buttons visible" bug).
-        lv_obj_align(button, LV_ALIGN_BOTTOM_MID,
-                     (i - 2) * 70, -56);
+        lv_obj_set_size(button, 84, 52);
+        lv_obj_align(button, LV_ALIGN_TOP_LEFT,
+                     102 + col * 96, 312 + row * 64);
         lv_obj_set_style_radius(button, 14, 0);
-        lv_obj_set_style_bg_color(button, lv_color_hex(0x2b3a5c), 0);
-        lv_obj_set_style_bg_color(button, lv_color_hex(0x3f6fa8), LV_STATE_PRESSED);
-        lv_obj_set_style_border_width(button, 0, 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x1d2b49), 0);
+        lv_obj_set_style_bg_opa(button, LV_OPA_80, 0);
+        lv_obj_set_style_border_width(button, 2, 0);
+        lv_obj_set_style_border_color(button, button_border[i], 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x35598f), LV_STATE_PRESSED);
 
         lv_obj_t* label = lv_label_create(button);
         lv_label_set_text(label, kActions[i]);
@@ -479,8 +504,7 @@ void GrokbotDisplay::InitializePetPanel() {
         pet_buttons_[i] = button;
     }
 
-
-    ESP_LOGI(TAG, "Pet panel ready (stats + 6 buttons, shared animation)");
+    ESP_LOGI(TAG, "Pet panel ready (Lv+body badge, 4 edge bars, 6 action buttons)");
 }
 
 void GrokbotDisplay::UpdatePetPanelFade() {
@@ -521,15 +545,15 @@ void GrokbotDisplay::RefreshPetPanelLocked() {
     auto& pet = PetState::GetInstance();
     const int values[6] = {pet.mood(), pet.satiety(), pet.energy(),
                            pet.health(), pet.hygiene(), pet.fun()};
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 4; ++i) {
         if (pet_bars_[i] != nullptr) {
-            lv_bar_set_value(pet_bars_[i], values[i], LV_ANIM_OFF);
+            lv_bar_set_value(pet_bars_[i], values[kPetStatStateIndex[i]], LV_ANIM_OFF);
         }
     }
     if (pet_title_ != nullptr) {
-        char buffer[96];
-        snprintf(buffer, sizeof(buffer), "小何 Lv.%d %s  互动 %d",
-                 pet.level(), pet.stageName(), pet.bonds());
+        char buffer[64];
+        snprintf(buffer, sizeof(buffer), "Lv.%d · 体型 %s",
+                 pet.level(), pet.stageName());
         lv_label_set_text(pet_title_, buffer);
     }
 }

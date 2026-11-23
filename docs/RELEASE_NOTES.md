@@ -1,74 +1,91 @@
-# GrokBot AMOLED216 v13
+# GrokBot AMOLED216 v14
 
 预编译固件，适用于 **Waveshare ESP32-S3-Touch-AMOLED-2.16**（ESP32-S3R8 / 16MB Flash / 8MB PSRAM / 480×480 CO5300 AMOLED）。
 
-v12 的宠物页有 three 个实机问题：属性面板挡住角色脸、只有 3 个按钮可见、语音唤醒没有渐隐。v13 逐项修复，并按你提供的原理图按键定义重新分配交互。
+v13 留下三个实机问题：Key3 要「双击并长按」才出宠物页、松开又消失；静音只显示提示但仍有声音；宠物页信息太多、太像仪表盘。v14 逐项修复，并把宠物页重绘成宝可梦风格。
 
 ## 本版本修复 / 变更
 
-### 1. 宠物页 UI 重构（不再挡画面、按钮更大更全）
+### 1. Key3 单击切换宠物页（根因：有效电平配置错误）
 
-- **属性条移到左右两侧**：v12 顶部 176px 高的面板遮住了角色上半身。v13 把 6 条属性条改成左右各 3 条 slim 条（128×50，半透明），**中间完全镂空**，GrokBot 全脸可见。
-- **六个大按钮单行排布**：v12 用两行按钮且 Y 偏移为正值，第二行被推到屏幕外（只剩 3 个可见）。v13 改为底部单行 6 个 **66×66** 大按钮，X 居中分布在 [60,420] 安全区内，全部可见、触控面积更大。
-- **标题紧凑化**：缩为顶部小胶囊，不再占用画面中央。
+- 开机时用内部上拉采样 GPIO18 / GPIO16 的空闲电平，自动推断有效电平：
+  - 空闲为低 → 按键按下拉高 → `active-high`
+  - 空闲为高 → 按键按下拉低 → `active-low`
+- 实机日志确认：
+  ```text
+  I (239) WsAmoled216Grokbot: Button GPIO18 idle=1 -> active-low
+  I (259) WsAmoled216Grokbot: Button GPIO16 idle=0 -> active-high
+  ```
+  v13 把 Key3 固定配成 `active-high`，而实际硬件是 `active-low`，所以一次物理点击被解释成「释放+按下」一对边沿，表现为需要双击/长按。
+- Key3 改为监听**按下沿**（`OnPressDown`）切换宠物模式，不再绑定 `OnClick` / `OnLongPress`。一次正常单击即进入，松开后状态保持；再单击退出。
 
-### 2. 按原理图按键定义重构交互
+### 2. 静音真正生效（根因：调用了不下发硬件的重载）
 
-| 按键 | GPIO | 首页 | 宠物页 |
-| --- | --- | --- | --- |
-| BOOT | GPIO0 | 单击对话/配网、三击静音、长按锁屏 | 同左 |
-| Key3（CHIP_PU） | GPIO18 | 单击进入宠物模式 | 单击/长按退出宠物模式 |
-| SYS_OUT | GPIO16 | 单击静音 | 单击探险、双击睡觉/唤醒、长按退出 |
+`AudioCodec` 有两个重载：
 
-BOOT 上不再绑定双击（避免误触），进出宠物模式交给专用 Key3。辅助按键设为高电平有效，并加 5 秒开机保护，避免上电抖动误触锁屏。
-
-### 3. 修复语音唤醒渐隐
-
-**根因**：刷机复位后 BOOT/GPIO 引脚抖动触发了"长按锁屏"，`SetPetMode()` 开头的 `screen_locked_` 检查把渐隐直接拦截了——所以唤醒时宠物页不消失。
-
-**修复**：
-- 动画循环直接轮询 `requested_status_`，一旦是 `listening` 就强制退出宠物模式（不依赖 `SetStatus` 调用时机）；
-- 辅助按键长按加开机 5 秒保护 + SYS_OUT 长按改为退出宠物模式（不再锁屏），消除误锁屏来源。
-
-自检验证（随后已移除自检代码）：
-
-```
-=== V13 SELFTEST BEGIN ===
-Pet mode ON (overlay fade-in, character stays live)
-Pet action 0 -> 投喂成功
-SELFTEST: simulate LISTENING status
-Pet mode OFF (overlay fade-out, character stays live)
-Voice wake-up: pet panel fading out to home
-Animation -> listening
+```cpp
+virtual void SetOutputVolume(int volume);          // BoxAudioCodec 覆盖：写 ES8311 硬件 + NVS
+virtual void SetOutputVolume(int volume, bool persist);  // 基类：只改内存 + 可选 NVS
 ```
 
-### 4. 继承 v12 的能力
+v13 的 `ToggleMute()` 调用了 `SetOutputVolume(0, false)`，只改了 `output_volume_`，**从未调用到 `BoxAudioCodec::SetOutputVolume()`**，所以界面显示 Muted，扬声器却仍在出声。
 
-- 六个按钮各驱动一种不同动画（happy / excited / playful / shy / surprised / sleeping）
-- 进宠物模式自动唤醒睡着的宠物；动作反馈在面板内显示，不抢占全局动画
-- 中间 GrokBot 形象始终是同一个对象，切页只淡入淡出覆盖层，动画连贯
-- v2.6.0 官方基线、AFE `wn9_hiesp` 唤醒词、四向旋转、30 FPS、DNS 固化、AXP2101 稳定性、保留 NVS
+v14 改为调用单参虚函数：
 
-## 验证记录（实机）
+```cpp
+codec->SetOutputVolume(0);      // 静音：硬件音量 0
+codec->SetOutputVolume(restored); // 恢复：硬件音量回到原值
+```
 
-- `App version: 2.6.0-grokbot-v13`；`Pet panel ready`；`Electronic pet ready`
-- 自检：进入宠物模式 → 投喂 → 模拟 LISTENING → `Pet mode OFF` + `Voice wake-up: ... fading out` → `Animation -> listening`
-- 开机日志无 `Screen locked`（启动保护生效），无 `AP started`（自动配网），无 E 级错误
-- `Static DNS ... readback=223.5.5.5`；`MQTT: Connected`；`Model 0: wn9_hiesp`
+日志判定：`Muted (hardware volume 0, saved volume ...)` + `Set output volume to 0 (persist=1)`。若上次关机时留在静音状态，`AudioCodec::Start()` 会把读到的 0 自动恢复为 70，避免重启后近乎无声。
+
+### 3. 宝可梦风格宠物页重绘
+
+- **顶部**：只显示 `Lv.X · 体型 成长阶段`（如 `Lv.12 · 体型 成体`）。删掉名字「小何」和互动次数。
+- **四条属性条组成完整环**：
+  - 心情 → 上边（青色，360×12）
+  - 健康 → 右边（粉色，12×330，竖向）
+  - 饱腹 → 下边（琥珀色，360×12）
+  - 清洁 → 左边（绿色，12×330，竖向）
+  - 四角用小圆角连接点收口，视觉上形成一个闭环。
+- **只保留这四项**：活力 / 乐趣仍在后台养成逻辑里参与计算，但不再占用屏幕上四个位置。
+- **操作按钮**：六个 84×52 大圆角按钮按 3×2 网格居中排布，彩色描边区分类型；比 v13 的 66×66 单行更宽松，触控区更大。
+- **角色动画不中断**：中间仍是同一个 `emoji_image_`，切页只淡入淡出覆盖层；六个按钮继续分别触发 happy / excited / playful / shy / surprised / sleeping。
+- 语音唤醒仍会强制宠物页渐隐回主界面。
+
+## 实机验证记录
+
+启动日志（`xiaozhi/logs/grokbot_boot_v14.log`）：
+
+```text
+I (106) app_init: App version:      2.6.0-grokbot-v14
+I (239) WsAmoled216Grokbot: Button GPIO18 idle=1 -> active-low
+I (259) WsAmoled216Grokbot: Button GPIO16 idle=0 -> active-high
+I (1867) WsAmoled216Grokbot: Electronic pet ready: 心87 饱59 力73 健100 洁87 趣30
+I (1958) GrokbotDisplay: Pet panel ready (Lv+body badge, 4 edge bars, 6 action buttons)
+I (4585) WifiBoard: Static DNS applied ... readback=223.5.5.5 (err 0/0/0)
+I (5949) MQTT: Connected to endpoint
+I (7596) WifiBoard: Static DNS applied ... readback=223.5.5.5 (err 0/0/0)
+```
+
+- 无 `AP started` → NVS 保留，自动配网成功。
+- 无 `ESP_ERROR_CHECK` / `Rebooting` / `abort` / E 级错误。
+- Key3 与物理静音需按键实测；代码路径与有效电平已由日志确认。
 
 ## 刷机
 
-```
+```bash
 pip3 install esptool pyserial
-./flash_grokbot_v13.sh /dev/cu.usbmodem2101        # 保留 NVS（推荐）
+./flash_grokbot_v14.sh /dev/cu.usbmodem2101        # 保留 NVS（推荐）
+./flash_grokbot_v14.sh /dev/cu.usbmodem2101 AUTO   # 跳过确认
 ```
 
-整片镜像 `grokbot_waveshare_amoled216_v13.bin` 可直烧 0x0（会清 NVS，适合全新板子）。
+整片镜像 `grokbot_waveshare_amoled216_v14.bin`（SHA256 `783161184cfad17746ea4cd5b2295addfa79d2d1567197c43f066bf6620c3ae0`）可直烧 0x0（会清 NVS，适合全新板子）。
 
 ## 回滚
 
-`./flash_grokbot_v12.sh`（工作区内，保留 NVS）。发布目录保留 v6–v13 镜像。
+`./flash_grokbot_v13.sh`（工作区内，保留 NVS）。`releases/` 保留 v6–v14 全部镜像与分分区组件。
 
 ## 引用
 
-玩法设计参考 DigiCat、ESP32-TamaPetchi、ESP32-C6 Desk Pet、小鲸鲸鱼娘宠物等开源项目，详见 [THIRD_PARTY_NOTICES.md](https://github.com/Acrylic959/grokbot-amoled216/blob/master/THIRD_PARTY_NOTICES.md)。本项目是第三方移植增强，非上游官方仓库。
+玩法与界面设计参考 DigiCat、ESP32-TamaPetchi、ESP32-C6 Desk Pet、小鲸鲸鱼娘宠物等开源项目，详见 [THIRD_PARTY_NOTICES.md](https://github.com/Acrylic959/grokbot-amoled216/blob/master/THIRD_PARTY_NOTICES.md)。本项目是第三方移植增强，非上游官方仓库。
