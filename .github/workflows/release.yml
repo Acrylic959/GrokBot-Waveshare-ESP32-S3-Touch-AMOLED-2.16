@@ -23,13 +23,14 @@ jobs:
           cd releases
           sha256sum -c SHA256SUMS
 
-      - name: Publish / update v15 release
+      - name: Publish / update v16 release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v15
-          name: GrokBot AMOLED216 v15 (inline stat labels + 4 buttons + tap-to-pet + auto sleep)
+          tag_name: v16
+          name: GrokBot AMOLED216 v16 (monochrome rounded pet ring + 92x64 buttons)
           body_path: docs/RELEASE_NOTES.md
           files: |
+            releases/grokbot_waveshare_amoled216_v16.bin
             releases/grokbot_waveshare_amoled216_v15.bin
             releases/grokbot_waveshare_amoled216_v14.bin
             releases/grokbot_waveshare_amoled216_v13.bin

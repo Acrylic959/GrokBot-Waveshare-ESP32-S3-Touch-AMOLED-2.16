@@ -12,7 +12,7 @@
 | BOOT 键 | GPIO0；单击对话/配网、三击静音、长按 2000ms 锁屏 |
 | Key3 | GPIO18（原理图标注 CHIP_PU）；单击进入/退出宠物模式（v14 开机自动检测有效电平，按下沿触发，不再需要双击/长按） |
 | SYS_OUT | GPIO16；单击宠物页探险/首页静音，双击睡觉唤醒，长按退出宠物页 |
-| 触屏 | CST9217；首页不响应触摸，v15 宠物模式页四个 88×64 LVGL 大圆角按钮（单行居中），点击屏幕中央角色=抚摸，静置 1 分钟=自动睡觉 |
+| 触屏 | CST9217；首页不响应触摸，v16 宠物模式页四个 92×64 黑白描边 LVGL 按钮（单行居中，间距 4px），点击屏幕中央角色=抚摸，静置 1 分钟=自动睡觉 |
 
 ## 相对上游的改动
 
@@ -29,7 +29,7 @@
 | --- | --- |
 | `main/Kconfig.projbuild` | 注册 `BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT` |
 | `main/CMakeLists.txt` | 板型源码 / 字体 / assets / esp_rom 依赖 |
-| `main/display/grokbot_display.cc/.h` | v7 帧率 30fps（音频活跃 15fps / 省电 10fps）、锁屏暂停动画、反向播放解码路径精简、诊断日志；v9 idle 时由宠物状态驱动表情；v11 加入待机小动作；v12 独立宠物页；v14 宝可梦风格四边属性环；v15 属性名嵌条、四按钮、点击抚摸（playful）、静置 1 分钟自动睡眠（sleeping） |
+| `main/display/grokbot_display.cc/.h` | v7 帧率 30fps（音频活跃 15fps / 省电 10fps）、锁屏暂停动画、反向播放解码路径精简、诊断日志；v9 idle 时由宠物状态驱动表情；v11 加入待机小动作；v12 独立宠物页；v14 宝可梦风格四边属性环；v15 属性名嵌条、四按钮、点击抚摸（playful）、静置 1 分钟自动睡眠（sleeping）；v16 黑白 UI（角色保持原色）、四条 14px 等宽属性条 + 四个 arc 连成连续圆角矩形环、属性名居中、按钮 92×64 间距 4px |
 | `main/display/pet_state.cc/.h` | v9 新增电子宠物；v11 重写为完整养成系统：六维状态（心情/饱腹/活力/健康/清洁/乐趣）、等级/成长阶段/亲密度/成就、抚摸防刷分、探险事件、睡眠与永不死亡机制、离线衰减 |
 | `main/application.cc` | v7 OTA 版本检查前 3 次失败静默（配网 error 降噪） |
 | `main/audio/audio_codec.h` | 本板 I2S ISR IRAM、DMA 8×360（120ms）、中断优先级 3 |
@@ -38,7 +38,7 @@
 | `main/boards/common/wifi_board.cc/.h` | v8 联网后固化公共 DNS + 3 秒后重设（防 DHCP 覆盖），根治 `api.tenclass.net` 解析失败 |
 | `main/audio/audio_codec.cc/.h` | v8 静音会话级（新增 `SetOutputVolume(volume, persist)`），开机音量默认 70 |
 | `main/protocols/*`, `main/mcp_server.*`, `main/ota.*` | v8 从上游 v2.6.0 全量合入，适配 `ProcessPending` / `AddClientCapabilities` / `AddSystemStatus` |
-| `CMakeLists.txt` | 版本号（当前 v15：`2.6.0-grokbot-v15`） |
+| `CMakeLists.txt` | 版本号（当前 v16：`2.6.0-grokbot-v16`） |
 | `sdkconfig` / 板型 `config.json` | v9 曾改 Multinet 自定义唤醒词；v10 起回退到 v8 的 AFE WakeNet `wn9_hiesp`，v11 保持不变 |
 | 板型 `config.h` | v10 删除 `ROTATE_FADE_*` / `ROTATE_FLIP_*` 动画参数，v11 保持不变 |
 | 板型 `.cc` | v10 删除全部旋转动画、宠物互动改触屏；v11 修复触屏（改轮询输入设备，绕开 LVGL 事件吞噬）、触屏纵向五分区 + 双击探险 + 长按状态页、AXP2101 I2C 探测重试 5 次避免热刷机重启、BOOT 双击投喂；v13 Key3/SYS_OUT 按键；v14 辅助键有效电平开机检测、Key3 按下沿单击切换宠物页、静音改用虚拟单参 `SetOutputVolume()` 真正下发 ES8311 音量 |
@@ -61,7 +61,8 @@
 | v12 | 首页取消触摸 + 独立宠物模式页（属性条+六按钮）+ 按钮驱动差异化动画 + 语音唤醒渐隐 + 进页自动唤醒 | `9f77b010` |
 | v13 | 属性条改左右侧不挡角色 + 六按钮单行大尺寸修复裁切 + Key3/SYS_OUT 按键 + 修复唤醒渐隐被误锁屏拦截 | `008dcb1e` |
 | v14 | Key3 有效电平自动检测与单击切换 + 静音真正下发硬件音量 + 宝可梦风格宠物页（等级/体型、四边环形属性条、3×2 按钮） | `78316118` |
-| **v15** | **属性名嵌入属性条 + 按钮精简为四个 + 点击角色抚摸（playful）+ 静置 1 分钟自动睡眠（sleeping）+ 属性环贴边** | **`f4cefafe`** |
+| v15 | 属性名嵌入属性条 + 按钮精简为四个 + 点击角色抚摸（playful）+ 静置 1 分钟自动睡眠（sleeping）+ 属性环贴边 | `f4cefafe` |
+| **v16** | **黑白极简 UI（角色保持原色）+ 四条 14px 等宽属性条与四角 arc 连成完整圆角矩形环 + 属性名居中 + 按钮 92×64 间距 4px** | **`bbed6038`** |
 
 完整 SHA256 见 `releases/SHA256SUMS`。
 

@@ -105,8 +105,10 @@ private:
     lv_obj_t* pet_panel_ = nullptr;
     lv_obj_t* pet_title_ = nullptr;
     lv_obj_t* pet_feedback_ = nullptr;
-    // Four edge bars: mood(top), health(right), satiety(bottom), clean(left).
+    // Continuous monochrome rounded-rectangle ring: 4 straight bars + 4 arcs.
+    lv_obj_t* pet_ring_ = nullptr;
     lv_obj_t* pet_bars_[4] = {};
+    lv_obj_t* pet_corner_arcs_[4] = {};
     // Only 4 on-screen buttons: feed / play / clean / explore.
     lv_obj_t* pet_buttons_[4] = {};
     bool pet_saved_status_visible_ = true;
