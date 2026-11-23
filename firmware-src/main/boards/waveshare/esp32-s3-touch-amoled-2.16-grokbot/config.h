@@ -60,15 +60,9 @@
 // Hold BOOT for this long to toggle the screen lock.
 #define SCREEN_LOCK_LONG_PRESS_MS 2000
 
-// Auto-rotate tuning.
+// Auto-rotate tuning. Rotation switches instantly (no transition animation).
 #define ROTATE_POLL_INTERVAL_MS 150
 #define ROTATE_STABLE_SAMPLES 3
 #define ROTATE_AXIS_THRESHOLD_MG 450
 #define ROTATE_FLAT_Z_THRESHOLD_MG 780
-
-// Rotation transition: fade a full-screen black curtain in, switch the
-// hardware MADCTL rotation while hidden, then fade it out.
-#define ROTATE_FADE_IN_MS 130
-#define ROTATE_FADE_HOLD_MS 40
-#define ROTATE_FADE_OUT_MS 200
 #endif // _BOARD_CONFIG_H_

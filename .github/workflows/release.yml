@@ -23,13 +23,15 @@ jobs:
           cd releases
           sha256sum -c SHA256SUMS
 
-      - name: Publish / update v8 release
+      - name: Publish / update v10 release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v8
-          name: GrokBot AMOLED216 v8 (v2.6.0 base + DNS fix)
+          tag_name: v10
+          name: GrokBot AMOLED216 v10 (AFE wake word + no rotation animation + touch pet)
           body_path: docs/RELEASE_NOTES.md
           files: |
+            releases/grokbot_waveshare_amoled216_v10.bin
+            releases/grokbot_waveshare_amoled216_v9.bin
             releases/grokbot_waveshare_amoled216_v8.bin
             releases/grokbot_waveshare_amoled216_v7.bin
             releases/grokbot_waveshare_amoled216_v6.bin

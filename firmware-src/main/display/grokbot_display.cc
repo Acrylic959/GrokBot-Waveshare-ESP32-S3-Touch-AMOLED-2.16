@@ -1,4 +1,5 @@
 #include "grokbot_display.h"
+#include "pet_state.h"
 
 #include "assets.h"
 #include "assets/lang_config.h"
@@ -172,8 +173,7 @@ const char* MapStatus(const char* status) {
 GrokbotDisplay::GrokbotDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
                                int width, int height, int offset_x, int offset_y, bool mirror_x,
                                bool mirror_y, bool swap_xy, gpio_num_t te_pin)
-    : SpiLcdDisplay(panel_io, panel, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy,
-                    80),
+    : SpiLcdDisplay(panel_io, panel, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy),
       te_pin_(te_pin) {}
 
 GrokbotDisplay::~GrokbotDisplay() {
@@ -354,7 +354,13 @@ void GrokbotDisplay::SetStatus(const char* status) {
     if (loading_assets) {
         atlas_refresh_required_.store(true);
     }
-    requested_status_.store(MapStatus(status));
+    const char* mapped_status = MapStatus(status);
+    requested_status_.store(mapped_status);
+    // When the device returns to idle, clear any AI-driven emotion so the
+    // electronic pet's ambient expression takes over again.
+    if (mapped_status != nullptr && strcmp(mapped_status, "idle") == 0) {
+        requested_emotion_.store(nullptr);
+    }
     assets_update_in_progress_.store(loading_assets);
     LvglDisplay::SetStatus(status);
 }
@@ -396,7 +402,13 @@ const char* GrokbotDisplay::EffectiveAnimationName() {
         return status;
     }
     const char* emotion = requested_emotion_.load();
-    return emotion != nullptr ? emotion : (status != nullptr ? status : "idle");
+    if (emotion != nullptr) {
+        return emotion;
+    }
+    // Idle with no explicit emotion: let the virtual pet's state choose the
+    // ambient animation (happy / searching / drowsy / sad / idle).
+    const char* pet_emotion = PetState::GetInstance().SuggestEmotion();
+    return pet_emotion != nullptr ? pet_emotion : "idle";
 }
 
 bool GrokbotDisplay::EnsurePlayer() {

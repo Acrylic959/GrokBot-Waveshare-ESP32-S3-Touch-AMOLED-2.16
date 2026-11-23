@@ -1,22 +1,25 @@
 # GrokBot · Waveshare ESP32-S3-Touch-AMOLED-2.16
 
-把 **GrokBot 动画角色** 移植到微雪 `ESP32-S3-Touch-AMOLED-2.16`（小智 AI 语音助手固件）上的第三方固件。带四向自动旋转、BOOT 长按锁屏、音频断续优化，开箱即刷。
+把 **GrokBot 动画角色** 移植到微雪 `ESP32-S3-Touch-AMOLED-2.16`（小智 AI 语音助手固件）上的第三方固件。带四向自动旋转、触屏互动的电子宠物、AFE 唤醒词、BOOT 按键快捷操作与音频断续优化，开箱即刷。
 
 第一次来？先看 **[项目介绍](INTRODUCTION.md)** —— 这个文件讲清楚它是什么、为什么做、能做什么；本文件则是刷机与构建的技术手册。
 
 > 本仓库是**移植与增强项目**，不是上述任一上游项目的官方仓库。所有原始代码的版权归各自作者所有，详见 [引用与致谢](#引用与致谢) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-> 想要一个直接可刷的固件镜像？去 [Releases](../../releases/tag/v8) 下载 `grokbot_waveshare_amoled216_v8.bin`，或按下方「刷机」步骤用分分区镜像保留 Wi-Fi 配网。
+> 想要一个直接可刷的固件镜像？去 [Releases](../../releases/tag/v10) 下载 `grokbot_waveshare_amoled216_v10.bin`，或按下方「刷机」步骤用分分区镜像保留 Wi-Fi 配网。
 
 ## 功能
 
 - **基于官方 v2.6.0 基线**（v8 起）：整体合入上游 78/xiaozhi-esp32 v2.6.0 的协议层 / MCP / OTA / 网络管理最新代码，并适配其破坏性 API 变更。
+- **AFE 唤醒词**（v10 起恢复）：使用官方 WakeNet `wn9_hiesp` 模型（v9 的 Multinet 自定义词已按反馈移除）。
+- **电子宠物**（v9 起，v10 改触屏互动）：心情 / 饱腹 / 活力三维状态，随时间衰减并持久化到 NVS（离线期间补偿衰减）。状态自动驱动 GrokBot 表情（开心 / 困倦 / 饥饿 / 难过 / 待机）。**触屏三分区互动**：上方=玩耍、中部=抚摸、下方=投喂。
+- **旋转直接切换，无动画**（v10 起）：IMU 检测到的方向变化直接切换 MADCTL，不再有黑幕 / 翻页 / 淡入淡出过渡（v7 的淡入淡出与 v9 的物理翻页均已移除）。
 - **GrokBot 动画显示**：28 状态 / 360×360 图集，随小智状态（idle / listening / speaking / notifying …）切换表情；v7 起 30 FPS 满帧播放。
-- **四向自动旋转**：板载 QMI8658 六轴 IMU，重力方向判定，状态栏 / 字幕 / 动画整体正立；v7 起旋转带黑幕淡入淡出的平滑过渡。
-- **BOOT 按键操作**：单击对话/配网、双击 AEC（可选）、**三击静音**、长按 2 秒锁屏。静音为会话级（v8 起不写入 NVS，避免重启后音量异常）。
+- **四向自动旋转**：板载 QMI8658 六轴 IMU，重力方向判定，状态栏 / 字幕 / 动画整体正立。
+- **BOOT 按键操作**（精简）：单击对话/配网、**三击静音**、长按 2 秒锁屏。宠物互动已全部移到触屏，不再占用 BOOT 组合键。静音为会话级（不写入 NVS）。
 - **音频流畅度优化**：I2S ISR/控制函数入 IRAM、DMA 缓冲加深、播放队列 480ms、解码/输出任务独立核绑定、Wi-Fi 省电动态关闭。
 - **DNS 固化根治音频断续**（v8）：联网后固定公共 DNS（223.5.5.5 / 119.29.29.29 / 8.8.8.8）并在 DHCP 完成后重设，解决 `api.tenclass.net` 解析失败导致的 TTS/MQTT 断流。
-- **自动配网保留**：刷机不清除 NVS，已配网设备开机自动重连，无需重新配网。
+- **自动配网保留**：刷机不清除 NVS，已配网设备开机自动重连，无需重新配网；宠物状态也保存在同一 NVS 中。
 
 ## 硬件要求
 
@@ -50,9 +53,31 @@
 pip3 install esptool pyserial
 ```
 
-刷机脚本只覆盖 bootloader / 分区表 / app / assets，**保留 0x9000 的 NVS**（Wi-Fi 凭据与设备绑定 token）。首次刷入或全新板子会自动进入配网热点 `Xiaozhi-XXXX`（`http://192.168.4.1`）。
+刷机脚本只覆盖 bootloader / 分区表 / app / assets，**保留 0x9000 的 NVS**（Wi-Fi 凭据、设备绑定 token 与宠物状态）。首次刷入或全新板子会自动进入配网热点 `Xiaozhi-XXXX`（`http://192.168.4.1`）。
 
-### 2. 从源码构建
+### 2. 与电子宠物互动
+
+**触屏三分区**（v10 起，屏幕按纵向均分三段）：
+
+| 触摸区域 | 效果 |
+| --- | --- |
+| 上方 1/3 | 玩耍（活力 +、心情 +） |
+| 中部 1/3 | 抚摸（心情 +） |
+| 下方 1/3 | 投喂（饱腹 +） |
+
+每次互动都会在屏幕提示当前三维状态。分区按逻辑坐标判定，旋转后依然对应正确的屏幕区域。
+
+**BOOT 按键**（已精简，只保留三个动作）：
+
+| 操作 | 效果 |
+| --- | --- |
+| 单击 | 对话 / 配网 |
+| 三击 | 静音 / 恢复（会话级，不写 NVS） |
+| 长按 2 秒 | 锁屏 / 解锁（锁屏时触屏互动也会禁用） |
+
+心情 / 饱腹 / 活力初始均为 70，饱腹每分钟 -2、活力 -1、心情 -1；状态低于阈值时宠物会自动切换到对应表情（饥饿→`searching`、困倦→`drowsy`、难过→`sad`）。数据持久化在 NVS，关机再开机不会丢失。
+
+### 3. 从源码构建
 
 ```bash
 # 1) 安装 ESP-IDF v6.1.x 并加载环境
@@ -73,7 +98,7 @@ idf.py build
 
 > 构建提示：若 `idf.py build` 因 `python` / `python3` 路径不一致报错，可用 `cmake --build build -- -j8` 绕过；此方式不会自动刷新 `merged-binary.bin`，需手动用 `esptool merge-bin` 合并（参数见 `firmware-src/build/flash_args`）。
 
-### 3. 恢复原厂
+### 4. 恢复原厂
 
 见 [`tools/restore.sh`](tools/restore.sh)（需自行提供原厂备份镜像）。
 
@@ -84,7 +109,9 @@ idf.py build
 ├── firmware-src/                # 小智固件源码（基于官方 v2.6.0 + 全部 GrokBot 定制）
 │   └── main/boards/waveshare/esp32-s3-touch-amoled-2.16-grokbot/   # 本移植的板型代码
 ├── releases/                    # 预编译固件
-│   ├── grokbot_waveshare_amoled216_v8.bin   # v8 整片合并镜像（推荐，基于 v2.6.0）
+│   ├── grokbot_waveshare_amoled216_v10.bin  # v10 整片合并镜像（推荐）
+│   ├── grokbot_waveshare_amoled216_v9.bin   # v9 镜像（回滚用）
+│   ├── grokbot_waveshare_amoled216_v8.bin   # v8 镜像（回滚用）
 │   ├── grokbot_waveshare_amoled216_v7.bin   # v7 镜像（回滚用）
 │   ├── grokbot_waveshare_amoled216_v6.bin   # v6 镜像（回滚用）
 │   ├── SHA256SUMS                            # 各版本校验和
@@ -93,9 +120,9 @@ idf.py build
 │   ├── flash.sh                 # 保留 NVS 的刷机脚本
 │   └── restore.sh               # 原厂恢复辅助脚本
 ├── docs/
-│   ├── port-changes.patch       # 相对上游 fork commit 的完整改动
-│   ├── BOARD.md                 # 板型说明
-│   └── RELEASE_NOTES.md         # v8 发布说明
+│   ├── port-changes.patch       # 相对上游 fork commit 的移植改动（v1–v7 主体）
+│   ├── BOARD.md                 # 板型说明与版本历史
+│   └── RELEASE_NOTES.md         # v10 发布说明
 ├── .github/workflows/release.yml # 自动还原二进制并发布 Release
 ├── INTRODUCTION.md              # 项目介绍（面向访客）
 ├── THIRD_PARTY_NOTICES.md       # 第三方来源、commit、许可证全文引用

@@ -1,27 +1,33 @@
-# GrokBot AMOLED216 v8
+# GrokBot AMOLED216 v10
 
 预编译固件，适用于 **Waveshare ESP32-S3-Touch-AMOLED-2.16**（ESP32-S3R8 / 16MB Flash / 8MB PSRAM / 480×480 CO5300 AMOLED）。
 
-本次是**基线大版本升级**：从上游小智 `v2.5.3-dev-grokbot` 整体切换到官方 **78/xiaozhi-esp32 v2.6.0**（177 个提交），并重新移植全部 GrokBot 定制与音频优化。
+本版本按实际使用反馈，对 v9 做了三项「做减法」调整：恢复稳定唤醒词、去掉花哨的旋转动画、把宠物互动从 BOOT 按键移到触屏。
 
-## 本版本新增
+## 本版本新增 / 变更
 
-- **升级到官方 v2.6.0 基线**：全量合入上游协议层 / MCP / OTA / 设备状态机 / 网络管理等最新代码；适配上游的破坏性 API 变更（`Protocol::ProcessPending()` 接口、`Protocol::AddClientCapabilities()`、`Board::AddSystemStatus()`、`SpiLcdDisplay` 构造签名变更）。启动版本号显示 `2.6.0-grokbot-v8`。
-- **固化公共 DNS，根治音频断续**（核心修复）：设备此前对 `api.tenclass.net` 的 DNS 查询持续失败（`getaddrinfo()` 返回 `EAI_AGAIN`），导致 TTS 音频流与 MQTT 云端链路无法正常建立，表现为"声音卡顿"。v8 在 Wi-Fi 连接后把 DNS 固定为 `223.5.5.5`（阿里）/ `119.29.29.29`（腾讯）/ `8.8.8.8`，并在 DHCP 租约完全 settles 后（3 秒）重设一次，防止 DHCP 下发的 DNS 覆盖。实测读回 `readback=223.5.5.5`，域名成功解析为 `47.112.110.152`，`MQTT Connected` + `Activation done`，云端音频链路完全打通。
-- **音量体验修复**：三击静音改为会话级，不再把音量 0 写入 NVS；开机若读到静音遗留的 0，恢复为舒适音量 70（此前会退回近乎无声的 10，容易被误认为卡顿）。
-- **保留 v7 全部能力**：30 FPS 动画、BOOT 三击静音、旋转平滑过渡、配网 error 降噪。
+- **回退唤醒词到 v8 的 AFE 方案**：移除 v9 的 Multinet 自定义唤醒词 `ni hao xiao he`（显示「小何」），恢复官方 WakeNet `wn9_hiesp` 模型（唤醒词「小智小智 / Hi,ESP」）。assets 随之从 7.45 MB 降回 5.54 MB，启动日志确认 `Set WakeNet Model: wn9_hiesp`、`AFE Pipeline: ... -> WakeNet(wn9_hiesp)`，且不再出现 `CustomWakeWord`。
+- **删除所有旋转过渡动画**：移除 v9 的物理翻页（黑幕缩放 + 高光边缘 + 贝塞尔缓动）以及更早的黑幕淡入淡出。IMU 检测到方向变化后直接切换 MADCTL，画面即时旋转，无动画。相关 `lv_anim` / curtain / 缓动代码与 `ROTATE_FADE_*`、`ROTATE_FLIP_*` 参数全部清除。
+- **电子宠物互动改为触屏**：取消 BOOT 双击投喂 / 四击玩耍；改为触屏按纵向三分区——上方=玩耍、中部=抚摸、下方=投喂。BOOT 键精简为单击对话、三击静音、长按 2 秒锁屏三个动作。分区按 LVGL 逻辑坐标判定，旋转后依然正确。锁屏时触屏互动自动禁用。
 
-## 关于"最新固件"的重要说明
+## 继承 v1–v9 的全部能力
 
-对比上游 v2.6.0 后确认：**上游音频核心代码相对本固件没有任何卡顿修复**——上游仍是 2 帧播放队列、优先级 4、不绑核，而本固件早已采用 8 帧队列（480ms）、优先级 6、audio/opus 绑核 core 1、120ms DMA 等更激进的抗断续优化。因此本次升级**保留**了这些定制优化（未被上游覆盖），音频卡顿的真正根因是设备侧 DNS，已在本版本根治。
-
-## 继承 v1–v7 的全部能力
-
-- 四向自动旋转（QMI8658，状态栏/字幕/动画整体正立）+ 旋转黑幕淡入淡出过渡
-- BOOT 单击对话 / 双击 AEC / 三击静音 / 长按 2 秒锁屏
+- 电子宠物：心情 / 饱腹 / 活力三维状态，NVS 持久化 + 离线时间补偿衰减，状态自动驱动 GrokBot 表情
+- 基于官方 v2.6.0 基线（协议层 / MCP / OTA / 设备状态机）
+- 四向自动旋转（QMI8658，状态栏/字幕/动画整体正立）
+- BOOT 单击对话 / 三击静音 / 长按锁屏
 - 动画常态 30 FPS、音频活跃 15 FPS、锁屏暂停动画
 - 音频链路全套优化（I2S ISR 入 IRAM、DMA 加深、播放队列 480ms、任务绑核提优先级、Wi-Fi 省电动态关闭）
-- 刷机保留 NVS（Wi-Fi 凭据与设备绑定 token），开机自动重连
+- 公共 DNS 固化（223.5.5.5 / 119.29.29.29 / 8.8.8.8），根治 `api.tenclass.net` 解析失败导致的音频断续
+- 刷机保留 NVS（Wi-Fi 凭据、设备绑定 token、宠物状态），开机自动重连
+
+## 验证记录（实机）
+
+- `App version: 2.6.0-grokbot-v10`
+- `Electronic pet ready: ...` + `Pet touch interaction ready (top=play, middle=pet, bottom=feed)`
+- `Model 0: wn9_hiesp` / `Set WakeNet Model: wn9_hiesp` / `WakeNet(wn9_hiesp)`，无 `CustomWakeWord`
+- `Static DNS applied ... readback=223.5.5.5`、`MQTT: Connected to endpoint`、`Activation done`
+- 自动连接 Wi-Fi `K3`（192.168.107.90），无 `AP started`；启动日志无 E 级错误
 
 ## 刷机
 
@@ -31,17 +37,19 @@ pip3 install esptool pyserial
 ./tools/flash.sh /dev/cu.usbmodem2101  # 指定串口
 ```
 
-脚本写入 bootloader / 分区表 / ota_data / app / assets，**保留 0x9000 起的 NVS**。全新板子首次开机会进入配网热点 `Xiaozhi-XXXX`（`http://192.168.4.1`）。
+脚本写入 bootloader / 分区表 / app / assets，**保留 0x9000 起的 NVS**。全新板子首次开机会进入配网热点 `Xiaozhi-XXXX`（`http://192.168.4.1`）。
 
 ## 回滚
 
-如需回到升级前版本：`./flash_grokbot_v7.sh`（工作区内，保留 NVS）。发布目录内保留 v7、v6 镜像可回滚。
+如需回到上一版本：`./flash_grokbot_v9.sh`（工作区内，保留 NVS）。发布目录内保留 v6–v9 镜像可回滚。
 
 ## 文件说明
 
 | 文件 | 用途 |
 | --- | --- |
-| `grokbot_waveshare_amoled216_v8.bin` | v8 整片 16MB 合并镜像（推荐，基于 v2.6.0） |
+| `grokbot_waveshare_amoled216_v10.bin` | v10 整片 16MB 合并镜像（推荐） |
+| `grokbot_waveshare_amoled216_v9.bin` | v9 镜像（回滚用，含自定义唤醒词与旋转动画） |
+| `grokbot_waveshare_amoled216_v8.bin` | v8 镜像（回滚用） |
 | `grokbot_waveshare_amoled216_v7.bin` | v7 镜像（回滚用） |
 | `grokbot_waveshare_amoled216_v6.bin` | v6 镜像（回滚用） |
 | `parts/*.bin` | 分分区镜像，供 `tools/flash.sh` 保留 NVS 刷机 |
