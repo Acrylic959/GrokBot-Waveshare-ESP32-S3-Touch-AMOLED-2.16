@@ -2,6 +2,8 @@
 
 把 **GrokBot 动画角色** 移植到微雪 `ESP32-S3-Touch-AMOLED-2.16`（小智 AI 语音助手固件）上的第三方固件。带四向自动旋转、BOOT 长按锁屏、音频断续优化，开箱即刷。
 
+第一次来？先看 **[项目介绍](INTRODUCTION.md)** —— 这个文件讲清楚它是什么、为什么做、能做什么；本文件则是刷机与构建的技术手册。
+
 > 本仓库是**移植与增强项目**，不是上述任一上游项目的官方仓库。所有原始代码的版权归各自作者所有，详见 [引用与致谢](#引用与致谢) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 > **关于二进制文件**：GitHub 内容接口只接受 UTF-8 文本，因此仓库中的 `.bin` / `.atlas` / `.ogg` 等二进制文件以 base64 文本块存放在 `encoded-assets/`。刷机或编译前先运行 `python3 tools/reconstruct-assets.py` 还原原始文件；也可以直接从 [Releases](releases/tag/v6) 下载还原后的固件镜像。
@@ -93,6 +95,7 @@ idf.py build
 │   ├── BOARD.md                 # 板型说明
 │   └── RELEASE_NOTES.md         # v6 发布说明
 ├── .github/workflows/release.yml # 自动还原二进制并发布 Release
+├── INTRODUCTION.md              # 项目介绍（面向访客）
 ├── THIRD_PARTY_NOTICES.md       # 第三方来源、commit、许可证全文引用
 └── LICENSE                      # MIT（仅覆盖本仓库新增的移植代码）
 ```
