@@ -18,14 +18,14 @@ constexpr const char* kAtlasName = "grokbot.atlas";
 constexpr int kRoundEdgeInset = 56;
 constexpr int kRoundStatusTop = 56;
 constexpr int kRoundChatBottom = 66;
-// Each GrokBot frame inflates a zlib delta, expands 4-bit grayscale to RGB565
-// and pushes 360x360 pixels over QSPI. At 30 FPS this saturates CPU, PSRAM,
-// QSPI and GDMA, starving the I2S audio DMA and making the sound stutter.
-// Keep the idle animation at 20 FPS and drop to 8 FPS whenever the audio
-// pipeline is active (listening / speaking / notification playback).
-constexpr int kNormalFps = 20;
-constexpr int kAudioBusyFps = 8;
-constexpr int kPowerSaveFps = 5;
+// The atlas is authored at 30 FPS. Measured render cost is ~13-19 ms/frame
+// (inflate ~10-13 ms, 4-bit->RGB565 expand ~2 ms, present ~1-5 ms), which fits
+// in the 33 ms budget at 30 FPS. Audio output/opus are pinned to core 1 and the
+// animation task to core 0, so a full-rate animation no longer starves audio.
+// During active audio we still throttle moderately to leave PSRAM/QSPI headroom.
+constexpr int kNormalFps = 30;
+constexpr int kAudioBusyFps = 15;
+constexpr int kPowerSaveFps = 10;
 constexpr uint32_t kPanelTeHz = 60;
 
 const char* MapEmotion(const char* emotion) {
@@ -675,8 +675,7 @@ void GrokbotDisplay::AnimationTask() {
         } else if (!reverse_) {
             GrokBotPlayer::FrameInfo frame = {};
             rendered = player_.current_frame(&frame) && DecodeFrame(frame, true) && PresentFrame();
-            const int count = player_.selected_frame_count();
-            if (player_.current_index() + 1 >= count) {
+            if (player_.current_index() + 1 >= player_.selected_frame_count()) {
                 reverse_ = true;
             } else {
                 player_.advance();
@@ -684,18 +683,21 @@ void GrokbotDisplay::AnimationTask() {
         } else {
             const int lower = player_.start_frame();
             if (player_.current_index() <= lower) {
+                // Reached the start of the ping-pong range: switch to forward.
+                // Seek BEFORE decoding so the delta for the new index is applied
+                // to the current packed_ state (XOR accumulation is order-sensitive).
                 reverse_ = false;
                 if (player_.current_index() + 1 < player_.selected_frame_count()) {
                     player_.seek(player_.current_index() + 1);
                 }
                 GrokBotPlayer::FrameInfo frame = {};
-                rendered =
-                    player_.current_frame(&frame) && DecodeFrame(frame, true) && PresentFrame();
+                rendered = player_.current_frame(&frame) && DecodeFrame(frame, true) && PresentFrame();
                 player_.advance();
             } else {
+                // XOR is self-inverse: applying the current frame's delta to the
+                // accumulated state yields the previous frame.
                 GrokBotPlayer::FrameInfo frame = {};
-                if (player_.current_frame(&frame) && DecodeFrame(frame, false)) {
-                    ExpandPackedFrame();
+                if (player_.current_frame(&frame) && DecodeFrame(frame, true)) {
                     rendered = PresentFrame();
                     player_.retreat();
                 }
