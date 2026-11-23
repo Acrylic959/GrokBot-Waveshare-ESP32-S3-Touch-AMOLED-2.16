@@ -14,6 +14,8 @@
 #include <esp_timer.h>
 #include <miniz.h>
 
+LV_FONT_DECLARE(font_noto_sans_basic_14_1);
+
 namespace {
 constexpr const char* TAG = "GrokbotDisplay";
 constexpr const char* kAtlasName = "grokbot.atlas";
@@ -441,9 +443,9 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_obj_set_style_pad_all(pet_title_, 6, 0);
 
     // ---- Rounded rectangle made from exactly four bars --------------------
-    // Each bar is 14px thick with 7px end radius. They span the full width /
-    // height and overlap at the corners, so the two semicircular caps meet at
-    // the same centre and form a clean rounded corner. No arcs or dots.
+    // The two horizontal bars own the corners; the two vertical bars start
+    // just below the top bar and stop just above the bottom bar. They touch
+    // but never overlap, so no corner shows a stacked/double segment.
     pet_ring_ = lv_obj_create(pet_panel_);
     lv_obj_set_size(pet_ring_, 432, 444);
     lv_obj_align(pet_ring_, LV_ALIGN_TOP_LEFT, 24, 18);
@@ -454,11 +456,11 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_obj_clear_flag(pet_ring_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(pet_ring_, LV_OBJ_FLAG_CLICKABLE);
 
-    // top, right, bottom, left. Full spans overlap 14px at every corner.
+    // top, right, bottom, left. Vertical bars stop at the horizontal bars.
     const int bar_x[4] = {0, 418, 0, 0};
-    const int bar_y[4] = {0, 0, 430, 0};
+    const int bar_y[4] = {0, 14, 430, 14};
     const int bar_w[4] = {432, 14, 432, 14};
-    const int bar_h[4] = {14, 444, 14, 444};
+    const int bar_h[4] = {14, 416, 14, 416};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t* bar = lv_bar_create(pet_ring_);
         lv_obj_set_size(bar, bar_w[i], bar_h[i]);
@@ -479,14 +481,19 @@ void GrokbotDisplay::InitializePetPanel() {
 
         // Label has no background. Its colour flips between white (dark track)
         // and black (white fill) in RefreshPetPanelLocked() for contrast.
+        // Use the 14px font so the 20px body font does not crowd the 14px bar.
         lv_obj_t* name = lv_label_create(bar);
-        lv_label_set_text(name, (i == 1) ? "健\n康" : (i == 3) ? "清\n洁" : kPetStatLabels[i]);
+        lv_label_set_text(name, kPetStatLabels[i]);
+        lv_obj_set_style_text_font(name, &font_noto_sans_basic_14_1, 0);
         lv_obj_set_style_text_color(name, lv_color_white(), 0);
         lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_center(name);
         if (i == 1 || i == 3) {
-            lv_obj_set_size(name, 14, 32);
+            // Vertical bars: rotate the whole label 90 degrees instead of
+            // stacking horizontal glyphs.
+            lv_obj_set_size(name, 32, 14);
             lv_obj_set_style_pad_all(name, 0, 0);
+            lv_obj_set_style_transform_angle(name, 900, 0);
         } else {
             lv_obj_set_style_pad_left(name, 5, 0);
             lv_obj_set_style_pad_right(name, 5, 0);
@@ -507,11 +514,13 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_label_set_text(pet_subtitle_, "");
     lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
 
+    // Interaction feedback (e.g. "好吃！") appears with the subtitle under
+    // the level badge and above the character, never over its face.
     pet_feedback_ = lv_label_create(pet_panel_);
     lv_obj_set_width(pet_feedback_, 280);
     lv_obj_set_style_text_color(pet_feedback_, lv_color_white(), 0);
     lv_obj_set_style_text_align(pet_feedback_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pet_feedback_, LV_ALIGN_TOP_MID, 0, 310);
+    lv_obj_align(pet_feedback_, LV_ALIGN_TOP_MID, 0, 122);
     lv_label_set_text(pet_feedback_, "");
     lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
 
