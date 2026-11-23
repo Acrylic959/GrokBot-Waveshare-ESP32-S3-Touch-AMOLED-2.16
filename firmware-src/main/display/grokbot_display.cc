@@ -6,6 +6,7 @@
 #include "lvgl_theme.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include <esp_heap_caps.h>
@@ -13,8 +14,6 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <miniz.h>
-
-LV_FONT_DECLARE(font_noto_sans_basic_14_1);
 
 namespace {
 constexpr const char* TAG = "GrokbotDisplay";
@@ -361,6 +360,93 @@ constexpr int kPetFadeStep = 26;  // ~10 frames at 30 FPS => ~330 ms fade
 // petting is a tap on the character, sleeping is idle-triggered after 60 s.
 constexpr int kPetButtonActionId[4] = {0, 1, 3, 4};
 constexpr int64_t kPetAutoSleepUs = 60 * 1000000LL;
+
+// Four concentric rounded-rectangle rings. Corner radii decrease by the same
+// step as the insets so the gap stays equal on straight edges and corners.
+constexpr int kPetRingCount = 4;
+constexpr int kPetRingMaxPoints = 320;
+constexpr int kPetRingWidth = 10;
+const int kPetRingBounds[kPetRingCount][4] = {
+    {16, 16, 464, 464}, {28, 28, 452, 452},
+    {40, 40, 440, 440}, {52, 52, 428, 428},
+};
+const int kPetRingRadius[kPetRingCount] = {30, 25, 20, 15};
+const uint32_t kPetRingColors[kPetRingCount] = {
+    0x00E5FF,  // mood - cyan
+    0xFF5C8A,  // health - pink
+    0xFFC857,  // satiety - amber
+    0x4ADE80,  // hygiene - green
+};
+
+void BuildPetRingPoints(lv_point_precise_t* out, int* out_count, int ring, int value) {
+    *out_count = 0;
+    if (ring < 0 || ring >= kPetRingCount || value <= 0) {
+        return;
+    }
+    const float half = kPetRingWidth / 2.0f;
+    const float x0 = kPetRingBounds[ring][0] + half;
+    const float y0 = kPetRingBounds[ring][1] + half;
+    const float x1 = kPetRingBounds[ring][2] - half;
+    const float y1 = kPetRingBounds[ring][3] - half;
+    const float r = std::max(2.0f, static_cast<float>(kPetRingRadius[ring]) - half);
+    const float cx = (x0 + x1) / 2.0f;
+
+    lv_point_precise_t path[kPetRingMaxPoints];
+    int n = 0;
+    auto push = [&](float px, float py) {
+        if (n < kPetRingMaxPoints) {
+            path[n].x = px;
+            path[n].y = py;
+            ++n;
+        }
+    };
+    auto add_line = [&](float ax, float ay, float bx, float by) {
+        const float dist = std::hypot(bx - ax, by - ay);
+        const int steps = std::max(1, static_cast<int>(dist / 6.0f));
+        for (int i = 0; i <= steps; ++i) {
+            const float t = static_cast<float>(i) / steps;
+            push(ax + (bx - ax) * t, ay + (by - ay) * t);
+        }
+    };
+    auto add_arc = [&](float acx, float acy, float a0, float a1) {
+        const float span = std::fabs(a1 - a0);
+        const int steps = std::max(3, static_cast<int>(span * r / 6.0f));
+        for (int i = 0; i <= steps; ++i) {
+            const float a = (a0 + (a1 - a0) * i / steps) * 3.14159265f / 180.0f;
+            push(acx + r * std::cos(a), acy + r * std::sin(a));
+        }
+    };
+
+    // Start at the top centre and run clockwise around the rounded rectangle.
+    add_line(cx, y0, x1 - r, y0);
+    add_arc(x1 - r, y0 + r, -90.0f, 0.0f);
+    add_line(x1, y0 + r, x1, y1 - r);
+    add_arc(x1 - r, y1 - r, 0.0f, 90.0f);
+    add_line(x1 - r, y1, x0 + r, y1);
+    add_arc(x0 + r, y1 - r, 90.0f, 180.0f);
+    add_line(x0, y1 - r, x0, y0 + r);
+    add_arc(x0 + r, y0 + r, 180.0f, 270.0f);
+    add_line(x0 + r, y0, cx, y0);
+
+    if (n < 2) {
+        return;
+    }
+    float lengths[kPetRingMaxPoints];
+    lengths[0] = 0.0f;
+    for (int i = 1; i < n; ++i) {
+        lengths[i] = lengths[i - 1] +
+                     std::hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+    }
+    const float target = lengths[n - 1] * std::min(100, value) / 100.0f;
+    int last = 1;
+    while (last < n - 1 && lengths[last] < target) {
+        ++last;
+    }
+    for (int i = 0; i <= last; ++i) {
+        out[i] = path[i];
+    }
+    *out_count = last + 1;
+}
 }  // namespace
 
 void GrokbotDisplay::PetButtonEventCb(lv_event_t* event) {
@@ -434,7 +520,7 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_label_set_text(pet_title_, "Lv.1 · 体型 宝宝");
     lv_obj_set_style_text_color(pet_title_, lv_color_white(), 0);
     lv_obj_set_style_text_align(pet_title_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 44);
+    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 66);
     lv_obj_set_style_bg_color(pet_title_, lv_color_hex(0x141414), 0);
     lv_obj_set_style_bg_opa(pet_title_, LV_OPA_80, 0);
     lv_obj_set_style_border_color(pet_title_, lv_color_white(), 0);
@@ -442,95 +528,65 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_obj_set_style_radius(pet_title_, 14, 0);
     lv_obj_set_style_pad_all(pet_title_, 6, 0);
 
-    // ---- Rounded rectangle made from exactly four bars --------------------
-    // The two horizontal bars own the corners; the two vertical bars start
-    // just below the top bar and stop just above the bottom bar. They touch
-    // but never overlap, so no corner shows a stacked/double segment.
-    pet_ring_ = lv_obj_create(pet_panel_);
-    lv_obj_set_size(pet_ring_, 432, 444);
-    lv_obj_align(pet_ring_, LV_ALIGN_TOP_LEFT, 24, 18);
-    lv_obj_set_style_bg_opa(pet_ring_, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(pet_ring_, 0, 0);
-    lv_obj_set_style_pad_all(pet_ring_, 0, 0);
-    lv_obj_set_scrollbar_mode(pet_ring_, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(pet_ring_, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(pet_ring_, LV_OBJ_FLAG_CLICKABLE);
-
-    // top, right, bottom, left. Vertical bars stop at the horizontal bars.
-    const int bar_x[4] = {0, 418, 0, 0};
-    const int bar_y[4] = {0, 14, 430, 14};
-    const int bar_w[4] = {432, 14, 432, 14};
-    const int bar_h[4] = {14, 416, 14, 416};
-    for (int i = 0; i < 4; ++i) {
-        lv_obj_t* bar = lv_bar_create(pet_ring_);
-        lv_obj_set_size(bar, bar_w[i], bar_h[i]);
-        lv_obj_align(bar, LV_ALIGN_TOP_LEFT, bar_x[i], bar_y[i]);
-        if (i == 1 || i == 3) {
-            lv_bar_set_orientation(bar, LV_BAR_ORIENTATION_VERTICAL);
-        }
-        lv_bar_set_range(bar, 0, 100);
-        lv_bar_set_value(bar, 70, LV_ANIM_OFF);
-        lv_obj_set_style_bg_color(bar, lv_color_hex(0x2a2a2a), 0);
-        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(bar, lv_color_white(), LV_PART_INDICATOR);
-        lv_obj_set_style_radius(bar, 7, 0);
-        lv_obj_set_style_radius(bar, 7, LV_PART_INDICATOR);
-        lv_obj_set_style_pad_all(bar, 0, 0);
-        lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
-
-        // Label has no background. Its colour flips between white (dark track)
-        // and black (white fill) in RefreshPetPanelLocked() for contrast.
-        // Use the 14px font so the 20px body font does not crowd the 14px bar.
-        lv_obj_t* name = lv_label_create(bar);
-        lv_label_set_text(name, kPetStatLabels[i]);
-        lv_obj_set_style_text_font(name, &font_noto_sans_basic_14_1, 0);
-        lv_obj_set_style_text_color(name, lv_color_white(), 0);
-        lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_center(name);
-        if (i == 1 || i == 3) {
-            // Vertical bars: rotate the whole label 90 degrees instead of
-            // stacking horizontal glyphs.
-            lv_obj_set_size(name, 32, 14);
-            lv_obj_set_style_pad_all(name, 0, 0);
-            lv_obj_set_style_transform_angle(name, 900, 0);
-        } else {
-            lv_obj_set_style_pad_left(name, 5, 0);
-            lv_obj_set_style_pad_right(name, 5, 0);
-            lv_obj_set_style_pad_top(name, 0, 0);
-            lv_obj_set_style_pad_bottom(name, 0, 0);
-        }
-        pet_stat_labels_[i] = name;
-        pet_bars_[i] = bar;
+    // ---- Four concentric rounded-rectangle progress rings -----------------
+    // Apple-Watch style: no dark track, coloured progress only, round caps,
+    // and equal gaps on both straight edges and corners.
+    for (int i = 0; i < kPetRingCount; ++i) {
+        lv_obj_t* line = lv_line_create(pet_panel_);
+        lv_obj_set_pos(line, 0, 0);
+        lv_obj_set_size(line, LV_HOR_RES, LV_VER_RES);
+        lv_obj_set_style_line_width(line, kPetRingWidth, 0);
+        lv_obj_set_style_line_rounded(line, true, 0);
+        lv_obj_set_style_line_color(line, lv_color_hex(kPetRingColors[i]), 0);
+        lv_obj_clear_flag(line, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(line, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(line, LV_OBJ_FLAG_HIDDEN);
+        pet_ring_lines_[i] = line;
     }
 
-    // ---- Assistant subtitle sits under the level badge, clear of the face --
+    // ---- Assistant subtitle directly under the level badge ----------------
     pet_subtitle_ = lv_label_create(pet_panel_);
-    lv_obj_set_width(pet_subtitle_, 360);
+    lv_obj_set_width(pet_subtitle_, 320);
     lv_obj_set_style_text_color(pet_subtitle_, lv_color_white(), 0);
     lv_obj_set_style_text_align(pet_subtitle_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(pet_subtitle_, LV_LABEL_LONG_WRAP);
-    lv_obj_align(pet_subtitle_, LV_ALIGN_TOP_MID, 0, 88);
+    lv_obj_align(pet_subtitle_, LV_ALIGN_TOP_MID, 0, 102);
     lv_label_set_text(pet_subtitle_, "");
     lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
 
-    // Interaction feedback (e.g. "好吃！") appears with the subtitle under
-    // the level badge and above the character, never over its face.
-    pet_feedback_ = lv_label_create(pet_panel_);
-    lv_obj_set_width(pet_feedback_, 280);
-    lv_obj_set_style_text_color(pet_feedback_, lv_color_white(), 0);
-    lv_obj_set_style_text_align(pet_feedback_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pet_feedback_, LV_ALIGN_TOP_MID, 0, 122);
-    lv_label_set_text(pet_feedback_, "");
+    // Interaction feedback: white prefix + four coloured delta labels.
+    pet_feedback_ = lv_obj_create(pet_panel_);
+    lv_obj_set_size(pet_feedback_, 320, 26);
+    lv_obj_align(pet_feedback_, LV_ALIGN_TOP_MID, 0, 102);
+    lv_obj_set_style_bg_opa(pet_feedback_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(pet_feedback_, 0, 0);
+    lv_obj_set_style_pad_all(pet_feedback_, 0, 0);
+    lv_obj_set_scrollbar_mode(pet_feedback_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(pet_feedback_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(pet_feedback_, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+
+    pet_feedback_prefix_ = lv_label_create(pet_feedback_);
+    lv_obj_set_width(pet_feedback_prefix_, LV_SIZE_CONTENT);
+    lv_obj_set_style_text_color(pet_feedback_prefix_, lv_color_white(), 0);
+    lv_label_set_text(pet_feedback_prefix_, "");
+    for (int i = 0; i < kPetRingCount; ++i) {
+        lv_obj_t* value = lv_label_create(pet_feedback_);
+        lv_obj_set_width(value, LV_SIZE_CONTENT);
+        lv_obj_set_style_text_color(value, lv_color_hex(kPetRingColors[i]), 0);
+        lv_label_set_text(value, "");
+        lv_obj_add_flag(value, LV_OBJ_FLAG_HIDDEN);
+        pet_feedback_values_[i] = value;
+    }
+    UpdatePetFeedbackLayout();
 
     // ---- Four-action menu: monochrome buttons, 4px gaps --------------------
     static const char* kActions[4] = {"投喂", "玩耍", "清洁", "探险"};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t* button = lv_btn_create(pet_panel_);
-        lv_obj_set_size(button, 92, 64);
-        lv_obj_align(button, LV_ALIGN_TOP_LEFT, 50 + i * 96, 364);
-        lv_obj_set_style_radius(button, 16, 0);
+        lv_obj_set_size(button, 76, 56);
+        lv_obj_align(button, LV_ALIGN_TOP_LEFT, 76 + i * 84, 348);
+        lv_obj_set_style_radius(button, 14, 0);
         lv_obj_set_style_bg_color(button, lv_color_hex(0x121212), 0);
         lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(button, 2, 0);
@@ -545,7 +601,7 @@ void GrokbotDisplay::InitializePetPanel() {
         pet_buttons_[i] = button;
     }
 
-    ESP_LOGI(TAG, "Pet panel ready (4 rounded bars form ring, contrast labels, subtitle under level)");
+    ESP_LOGI(TAG, "Pet panel ready (4 concentric rounded rings, coloured deltas, subtitle under level)");
 }
 
 void GrokbotDisplay::UpdatePetPanelFade() {
@@ -586,18 +642,19 @@ void GrokbotDisplay::RefreshPetPanelLocked() {
     auto& pet = PetState::GetInstance();
     const int values[6] = {pet.mood(), pet.satiety(), pet.energy(),
                            pet.health(), pet.hygiene(), pet.fun()};
-    int shown[4] = {};
-    for (int i = 0; i < 4; ++i) {
-        shown[i] = values[kPetStatStateIndex[i]];
-        if (pet_bars_[i] != nullptr) {
-            lv_bar_set_value(pet_bars_[i], shown[i], LV_ANIM_OFF);
+    for (int i = 0; i < kPetRingCount; ++i) {
+        const int value = values[kPetStatStateIndex[i]];
+        int count = 0;
+        BuildPetRingPoints(pet_ring_points_[i], &count, i, value);
+        lv_obj_t* line = pet_ring_lines_[i];
+        if (line == nullptr) {
+            continue;
         }
-        // No label background: the glyphs take the inverse colour of the
-        // bar area they sit on (white over the dark track, black over fill).
-        if (pet_stat_labels_[i] != nullptr) {
-            lv_obj_set_style_text_color(
-                pet_stat_labels_[i],
-                shown[i] >= 50 ? lv_color_black() : lv_color_white(), 0);
+        if (count >= 2) {
+            lv_line_set_points(line, pet_ring_points_[i], count);
+            lv_obj_remove_flag(line, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(line, LV_OBJ_FLAG_HIDDEN);
         }
     }
     if (pet_title_ != nullptr) {
@@ -608,12 +665,86 @@ void GrokbotDisplay::RefreshPetPanelLocked() {
     }
 }
 
+void GrokbotDisplay::UpdatePetFeedbackLayout() {
+    if (pet_feedback_ == nullptr || pet_feedback_prefix_ == nullptr) {
+        return;
+    }
+    const int gap = 8;
+    int total = lv_obj_get_width(pet_feedback_prefix_);
+    int widths[kPetRingCount] = {};
+    for (int i = 0; i < kPetRingCount; ++i) {
+        if (pet_feedback_values_[i] != nullptr &&
+            !lv_obj_has_flag(pet_feedback_values_[i], LV_OBJ_FLAG_HIDDEN)) {
+            widths[i] = lv_obj_get_width(pet_feedback_values_[i]);
+            total += widths[i] + gap;
+        }
+    }
+    int x = (lv_obj_get_width(pet_feedback_) - total) / 2;
+    if (x < 0) x = 0;
+    lv_obj_set_pos(pet_feedback_prefix_, x, 0);
+    x += lv_obj_get_width(pet_feedback_prefix_) + gap;
+    for (int i = 0; i < kPetRingCount; ++i) {
+        if (widths[i] == 0 || pet_feedback_values_[i] == nullptr) {
+            continue;
+        }
+        lv_obj_set_pos(pet_feedback_values_[i], x, 0);
+        x += widths[i] + gap;
+    }
+}
+
+void GrokbotDisplay::ShowPetFeedbackText(const char* text) {
+    if (pet_feedback_ == nullptr || pet_feedback_prefix_ == nullptr) {
+        return;
+    }
+    lv_label_set_text(pet_feedback_prefix_, text != nullptr ? text : "");
+    for (int i = 0; i < kPetRingCount; ++i) {
+        if (pet_feedback_values_[i] == nullptr) {
+            continue;
+        }
+        lv_label_set_text(pet_feedback_values_[i], "");
+        lv_obj_add_flag(pet_feedback_values_[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    UpdatePetFeedbackLayout();
+    lv_obj_remove_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+    if (pet_subtitle_ != nullptr) {
+        lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void GrokbotDisplay::ShowPetFeedbackDeltas(const char* prefix, const int delta[kPetRingCount]) {
+    if (pet_feedback_ == nullptr || pet_feedback_prefix_ == nullptr || delta == nullptr) {
+        return;
+    }
+    lv_label_set_text(pet_feedback_prefix_, prefix != nullptr ? prefix : "");
+    char buffer[40];
+    for (int i = 0; i < kPetRingCount; ++i) {
+        lv_obj_t* label = pet_feedback_values_[i];
+        if (label == nullptr) {
+            continue;
+        }
+        if (delta[i] == 0) {
+            lv_label_set_text(label, "");
+            lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            snprintf(buffer, sizeof(buffer), "%s %+d", kPetStatLabels[i], delta[i]);
+            lv_label_set_text(label, buffer);
+            lv_obj_remove_flag(label, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    UpdatePetFeedbackLayout();
+    lv_obj_remove_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+    if (pet_subtitle_ != nullptr) {
+        lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void GrokbotDisplay::OnPetAction(int action) {
     if (action < 0 || action > 5) {
         return;
     }
     NotePetInteraction();
     auto& pet = PetState::GetInstance();
+    const int before[4] = {pet.mood(), pet.health(), pet.satiety(), pet.hygiene()};
     // Any explicit interaction wakes a sleeping pet first (except the sleep
     // toggle itself), so a tap/button never just says "it is asleep".
     if (action != 5 && pet.sleeping()) {
@@ -636,15 +767,15 @@ void GrokbotDisplay::OnPetAction(int action) {
     // Feedback stays INSIDE the pet panel.  ShowNotification() is deliberately
     // avoided: it used to force EffectiveAnimationName() to "notifying" for
     // seconds, hiding the very animation the action was supposed to trigger.
-    if (pet_feedback_ != nullptr) {
-        DisplayLockGuard lock(this);
-        if (lock) {
-            char feedback[160];
-            snprintf(feedback, sizeof(feedback), "%s", result != nullptr ? result : "");
-            lv_label_set_text(pet_feedback_, feedback);
-            lv_obj_remove_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
-            RefreshPetPanelLocked();
-        }
+    const int after[4] = {pet.mood(), pet.health(), pet.satiety(), pet.hygiene()};
+    int delta[kPetRingCount] = {};
+    for (int i = 0; i < kPetRingCount; ++i) {
+        delta[i] = after[i] - before[i];
+    }
+    DisplayLockGuard lock(this);
+    if (lock) {
+        ShowPetFeedbackDeltas(result != nullptr ? result : "", delta);
+        RefreshPetPanelLocked();
     }
     pet_feedback_until_us_.store(NowUs() + 4000000);  // hide after 4 s
 }
@@ -656,66 +787,81 @@ void GrokbotDisplay::SetPetMode(bool active) {
     if (pet_mode_active_.exchange(active) == active) {
         return;
     }
-    DisplayLockGuard lock(this);
-    if (!lock) {
-        return;
-    }
+
+    // Wake and logging must NOT happen while the display mutex is held:
+    // the animation task can hold the log lock and wait for the display lock,
+    // which deadlocks esp_log_impl_lock_timeout().
+    bool woke_on_enter = false;
     if (active) {
-        if (status_bar_ != nullptr) {
-            pet_saved_status_visible_ = !lv_obj_has_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (top_bar_ != nullptr) {
-            pet_saved_top_visible_ = !lv_obj_has_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (bottom_bar_ != nullptr) {
-            pet_saved_bottom_visible_ = !lv_obj_has_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (pet_panel_ != nullptr) {
-            lv_obj_remove_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_style_opa(pet_panel_, LV_OPA_TRANSP, 0);
-        }
-        if (pet_subtitle_ != nullptr) {
-            const char* text = lv_label_get_text(pet_subtitle_);
-            if (text != nullptr && text[0] != '\0') {
-                lv_obj_remove_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
-            } else {
-                lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
-            }
-        }
-        pet_fade_in_.store(true);
-        pet_feedback_until_us_.store(0);
-        // Entering the pet page is an explicit "I want to play" signal. Wake a
-        // sleeping pet so every button is usable right away (otherwise all
-        // actions would be refused with "它睡着了" and look broken).
         auto& pet = PetState::GetInstance();
         if (pet.sleeping()) {
             pet.Wake();
+            woke_on_enter = true;
+        }
+    }
+    {
+        DisplayLockGuard lock(this);
+        if (!lock) {
+            return;
+        }
+        if (active) {
+            if (status_bar_ != nullptr) {
+                pet_saved_status_visible_ = !lv_obj_has_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (top_bar_ != nullptr) {
+                pet_saved_top_visible_ = !lv_obj_has_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (bottom_bar_ != nullptr) {
+                pet_saved_bottom_visible_ = !lv_obj_has_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (pet_panel_ != nullptr) {
+                lv_obj_remove_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_style_opa(pet_panel_, LV_OPA_TRANSP, 0);
+            }
+            if (pet_subtitle_ != nullptr) {
+                const char* text = lv_label_get_text(pet_subtitle_);
+                if (text != nullptr && text[0] != '\0') {
+                    lv_obj_remove_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+                }
+            }
+            pet_fade_in_.store(true);
+            pet_feedback_until_us_.store(0);
+            if (pet_feedback_ != nullptr) {
+                lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+            }
+            NotePetInteraction();
+            RefreshPetPanelLocked();
+        } else {
+            pet_fade_in_.store(false);
+            pet_last_interaction_us_.store(0);
+            if (pet_feedback_ != nullptr) {
+                lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (pet_subtitle_ != nullptr) {
+                lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (status_bar_ != nullptr && pet_saved_status_visible_) {
+                lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (top_bar_ != nullptr && pet_saved_top_visible_) {
+                lv_obj_remove_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (bottom_bar_ != nullptr && pet_saved_bottom_visible_) {
+                lv_obj_remove_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+    if (active) {
+        if (woke_on_enter) {
             ESP_LOGI(TAG, "Pet was asleep -> auto wake on entering pet mode");
         }
-        NotePetInteraction();  // start the 60-second idle-to-sleep timer
-        RefreshPetPanelLocked();
         ESP_LOGI(TAG, "Pet mode ON (overlay fade-in, character stays live)");
     } else {
-        pet_fade_in_.store(false);
-        pet_last_interaction_us_.store(0);
-        if (pet_feedback_ != nullptr) {
-            lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (pet_subtitle_ != nullptr) {
-            lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (status_bar_ != nullptr && pet_saved_status_visible_) {
-            lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (top_bar_ != nullptr && pet_saved_top_visible_) {
-            lv_obj_remove_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (bottom_bar_ != nullptr && pet_saved_bottom_visible_) {
-            lv_obj_remove_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
-        }
         ESP_LOGI(TAG, "Pet mode OFF (overlay fade-out, character stays live)");
     }
 }
@@ -766,6 +912,9 @@ void GrokbotDisplay::SetChatMessage(const char* role, const char* content) {
     const bool visible = pet_mode_active_.load() && content != nullptr && content[0] != '\0';
     if (visible) {
         lv_obj_remove_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+        if (pet_feedback_ != nullptr) {
+            lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+        }
         // Keep the classic bottom subtitle bar out of the pet screen.
         if (bottom_bar_ != nullptr) {
             lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
@@ -1123,8 +1272,7 @@ void GrokbotDisplay::AnimationTask() {
             if (lock) {
                 RefreshPetPanelLocked();
                 if (just_fell_asleep && pet_feedback_ != nullptr) {
-                    lv_label_set_text(pet_feedback_, "静置 1 分钟，睡着啦 Zzz");
-                    lv_obj_remove_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+                    ShowPetFeedbackText("静置 1 分钟，睡着啦 Zzz");
                     pet_feedback_until_us_.store(ui_now + 4000000);
                 }
                 if (pet_feedback_until_us_.load() > 0 &&
@@ -1132,6 +1280,12 @@ void GrokbotDisplay::AnimationTask() {
                     pet_feedback_until_us_.store(0);
                     if (pet_feedback_ != nullptr) {
                         lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+                    }
+                    if (pet_subtitle_ != nullptr) {
+                        const char* sub = lv_label_get_text(pet_subtitle_);
+                        if (sub != nullptr && sub[0] != '\0') {
+                            lv_obj_remove_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+                        }
                     }
                 }
             }
