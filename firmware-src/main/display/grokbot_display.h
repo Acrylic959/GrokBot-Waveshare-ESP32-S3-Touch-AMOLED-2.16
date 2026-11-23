@@ -117,10 +117,11 @@ private:
     lv_obj_t* pet_feedback_prefix_ = nullptr;
     lv_obj_t* pet_feedback_values_[4] = {};
     // Four concentric rounded-rectangle progress rings are pre-rasterized into
-    // one ARGB8888 bitmap and shown as a single lv_image. Redrawing four full
-    // screen vector lines every character frame was the main FPS killer.
-    lv_obj_t* pet_ring_image_ = nullptr;
-    lv_image_dsc_t pet_ring_dsc_ = {};
+    // ONE ARGB8888 buffer, but displayed as FOUR edge strips (top/bottom/left/
+    // right). The transparent middle is not an lv_image at all, so per-frame
+    // character blits no longer blend a full-screen transparent overlay.
+    lv_obj_t* pet_ring_images_[4] = {};
+    lv_image_dsc_t pet_ring_dscs_[4] = {};
     uint8_t* pet_ring_buffer_ = nullptr;
     lv_point_precise_t pet_ring_points_[4][192] = {};
     int pet_ring_last_values_[4] = {-1, -1, -1, -1};

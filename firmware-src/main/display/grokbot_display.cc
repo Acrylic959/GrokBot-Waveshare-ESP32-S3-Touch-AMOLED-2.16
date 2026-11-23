@@ -551,9 +551,19 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_obj_set_style_pad_all(pet_title_, 6, 0);
 
     // ---- Four concentric rounded-rectangle progress rings -----------------
-    // Pre-rasterized into one ARGB8888 bitmap (Apple-Watch style: no dark
-    // track, coloured progress only, round caps, equal gaps).  A single image
-    // blit per frame replaces four full-screen vector polyline redraws.
+    // Rasterized into ONE ARGB8888 buffer but shown as FOUR edge strips, so the
+    // transparent middle is not an image object and per-frame character blits
+    // never blend a full-screen transparent overlay.
+    // Strips: top / bottom / left / right; their union covers ring bbox [16..464]
+    // with the centre hole [65..415] left completely empty (verified: all 31682
+    // ring pixels fall inside a strip, none inside the hole).
+    struct RingStrip { int x, y, w, h; };
+    static const RingStrip kStrips[4] = {
+        {0, 0, 480, 65},      // top
+        {0, 415, 480, 65},    // bottom
+        {0, 65, 65, 350},     // left
+        {415, 65, 65, 350},   // right
+    };
     const size_t ring_bytes = static_cast<size_t>(LV_HOR_RES) * LV_VER_RES * 4;
     pet_ring_buffer_ = static_cast<uint8_t*>(heap_caps_malloc(ring_bytes, MALLOC_CAP_SPIRAM));
     if (pet_ring_buffer_ == nullptr) {
@@ -561,20 +571,24 @@ void GrokbotDisplay::InitializePetPanel() {
     }
     if (pet_ring_buffer_ != nullptr) {
         memset(pet_ring_buffer_, 0, ring_bytes);
-        pet_ring_dsc_ = {};
-        pet_ring_dsc_.header.magic = LV_IMAGE_HEADER_MAGIC;
-        pet_ring_dsc_.header.cf = LV_COLOR_FORMAT_ARGB8888;
-        pet_ring_dsc_.header.w = LV_HOR_RES;
-        pet_ring_dsc_.header.h = LV_VER_RES;
-        pet_ring_dsc_.header.stride = LV_HOR_RES * 4;
-        pet_ring_dsc_.data_size = ring_bytes;
-        pet_ring_dsc_.data = pet_ring_buffer_;
-        pet_ring_image_ = lv_image_create(pet_panel_);
-        lv_obj_set_pos(pet_ring_image_, 0, 0);
-        lv_obj_set_size(pet_ring_image_, LV_HOR_RES, LV_VER_RES);
-        lv_image_set_src(pet_ring_image_, &pet_ring_dsc_);
-        lv_obj_clear_flag(pet_ring_image_, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(pet_ring_image_, LV_OBJ_FLAG_CLICKABLE);
+        for (int i = 0; i < 4; ++i) {
+            const RingStrip& strip = kStrips[i];
+            lv_image_dsc_t& dsc = pet_ring_dscs_[i];
+            dsc = {};
+            dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+            dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
+            dsc.header.w = strip.w;
+            dsc.header.h = strip.h;
+            dsc.header.stride = LV_HOR_RES * 4;  // full-row stride, same shared buffer
+            dsc.data_size = ring_bytes;
+            dsc.data = pet_ring_buffer_ + (static_cast<size_t>(strip.y) * LV_HOR_RES + strip.x) * 4;
+            lv_obj_t* img = lv_image_create(pet_panel_);
+            lv_obj_set_pos(img, strip.x, strip.y);
+            lv_image_set_src(img, &dsc);
+            lv_obj_clear_flag(img, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
+            pet_ring_images_[i] = img;
+        }
     }
 
     // ---- Assistant subtitle directly under the level badge ----------------
@@ -698,8 +712,10 @@ void GrokbotDisplay::RasterizePetRingsLocked() {
             }
         }
     }
-    if (pet_ring_image_ != nullptr) {
-        lv_obj_invalidate(pet_ring_image_);
+    for (lv_obj_t* img : pet_ring_images_) {
+        if (img != nullptr) {
+            lv_obj_invalidate(img);
+        }
     }
 }
 
