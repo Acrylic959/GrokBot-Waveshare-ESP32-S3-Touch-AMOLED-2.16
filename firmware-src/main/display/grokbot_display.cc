@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include <esp_heap_caps.h>
+#include <cstdio>
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <miniz.h>
@@ -326,6 +327,7 @@ void GrokbotDisplay::SetupUI() {
 
     lv_display_add_event_cb(display_, RounderEventCb, LV_EVENT_INVALIDATE_AREA, nullptr);
     InitializeTe();
+    InitializePetPanel();
 
     if (!running_.exchange(true)) {
         BaseType_t created = xTaskCreatePinnedToCore(AnimationTaskEntry, "grokbot_anim", 12 * 1024,
@@ -337,6 +339,291 @@ void GrokbotDisplay::SetupUI() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Dedicated electronic-pet mode.
+//
+// The pet character is ONE image object living in emoji_box_.  Switching
+// views must never delete/recreate it, otherwise the 30 FPS animation would
+// visibly stutter.  Instead a full-screen overlay is created on top of the
+// screen: an opaque header strip (stats), an opaque footer strip (buttons),
+// and a completely transparent middle window through which the same animated
+// character keeps playing without interruption.
+// ---------------------------------------------------------------------------
+namespace {
+constexpr const char* kPetStatLabels[6] = {"心情", "饱腹", "活力", "健康", "清洁", "乐趣"};
+constexpr int kPetFadeStep = 26;  // ~10 frames at 30 FPS => ~330 ms fade
+}  // namespace
+
+void GrokbotDisplay::PetButtonEventCb(lv_event_t* event) {
+    if (event == nullptr || lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    auto* display = static_cast<GrokbotDisplay*>(lv_event_get_user_data(event));
+    const intptr_t raw = reinterpret_cast<intptr_t>(lv_event_get_param(event));
+    // LVGL passes no useful param for CLICKED; the action index is stored in
+    // each button's user_data instead (see InitializePetPanel).
+    (void)raw;
+    if (display == nullptr) {
+        return;
+    }
+    lv_obj_t* target = lv_event_get_target_obj(event);
+    for (int i = 0; i < 6; ++i) {
+        lv_obj_t* candidate = target;
+        while (candidate != nullptr && candidate != display->pet_buttons_[i]) {
+            candidate = lv_obj_get_parent(candidate);
+        }
+        if (candidate == display->pet_buttons_[i]) {
+            display->OnPetAction(i);
+            return;
+        }
+    }
+}
+
+void GrokbotDisplay::InitializePetPanel() {
+    lv_obj_t* screen = lv_screen_active();
+    if (screen == nullptr) {
+        return;
+    }
+
+    pet_panel_ = lv_obj_create(screen);
+    lv_obj_set_size(pet_panel_, LV_HOR_RES, LV_VER_RES);
+    lv_obj_align(pet_panel_, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_opa(pet_panel_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(pet_panel_, 0, 0);
+    lv_obj_set_style_pad_all(pet_panel_, 0, 0);
+    lv_obj_set_scrollbar_mode(pet_panel_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(pet_panel_, LV_OBJ_FLAG_SCROLLABLE);
+    // Faded in/out by the animation task; never intercept clicks in home view.
+    lv_obj_set_style_opa(pet_panel_, LV_OPA_TRANSP, 0);
+    lv_obj_add_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN);
+
+    // ---- Header: title + six live status bars -----------------------------
+    lv_obj_t* header = lv_obj_create(pet_panel_);
+    lv_obj_set_size(header, LV_HOR_RES - 48, 176);
+    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 16);
+    lv_obj_set_style_bg_color(header, lv_color_hex(0x141826), 0);
+    lv_obj_set_style_bg_opa(header, LV_OPA_80, 0);
+    lv_obj_set_style_border_color(header, lv_color_hex(0x3a4566), 0);
+    lv_obj_set_style_border_width(header, 2, 0);
+    lv_obj_set_style_radius(header, 16, 0);
+    lv_obj_set_style_pad_all(header, 12, 0);
+    lv_obj_set_scrollbar_mode(header, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+
+    pet_title_ = lv_label_create(header);
+    lv_obj_set_width(pet_title_, LV_HOR_RES - 80);
+    lv_label_set_text(pet_title_, "小何 Lv.1 宝宝  互动 0");
+    lv_obj_set_style_text_color(pet_title_, lv_color_hex(0x9fd8ff), 0);
+    lv_obj_set_style_text_align(pet_title_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 0);
+
+    for (int i = 0; i < 6; ++i) {
+        const int row = i / 2;
+        const int col = i % 2;
+        lv_obj_t* row_obj = lv_obj_create(header);
+        lv_obj_set_size(row_obj, (LV_HOR_RES - 96) / 2, 40);
+        lv_obj_align(row_obj, LV_ALIGN_TOP_LEFT, 8 + col * ((LV_HOR_RES - 96) / 2 + 8),
+                     28 + row * 44);
+        lv_obj_set_style_bg_opa(row_obj, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row_obj, 0, 0);
+        lv_obj_set_style_pad_all(row_obj, 0, 0);
+        lv_obj_clear_flag(row_obj, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* name = lv_label_create(row_obj);
+        lv_label_set_text(name, kPetStatLabels[i]);
+        lv_obj_set_style_text_color(name, lv_color_hex(0xd8e2f5), 0);
+        lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, -8);
+
+        lv_obj_t* bar = lv_bar_create(row_obj);
+        lv_obj_set_size(bar, (LV_HOR_RES - 96) / 2 - 4, 12);
+        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+        lv_bar_set_range(bar, 0, 100);
+        lv_obj_set_style_bg_color(bar, lv_color_hex(0x2a3046), 0);
+        lv_obj_set_style_bg_color(bar, lv_color_hex(0x5fd0a8), LV_PART_INDICATOR);
+        lv_obj_set_style_radius(bar, 6, 0);
+        lv_obj_set_style_pad_all(bar, 0, 0);
+        pet_bars_[i] = bar;
+    }
+
+    pet_feedback_ = lv_label_create(pet_panel_);
+    lv_obj_set_width(pet_feedback_, LV_HOR_RES - 80);
+    lv_obj_set_style_text_color(pet_feedback_, lv_color_hex(0xffe08a), 0);
+    lv_obj_set_style_text_align(pet_feedback_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(pet_feedback_, LV_ALIGN_BOTTOM_MID, 0, 158);
+    lv_label_set_text(pet_feedback_, "");
+    lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+
+    // ---- Footer: six touch buttons ----------------------------------------
+    static const char* kActions[6] = {"投喂", "玩耍", "抚摸", "清洁", "探险", "睡觉"};
+    for (int i = 0; i < 6; ++i) {
+        const int row = i / 3;
+        const int col = i % 3;
+        lv_obj_t* button = lv_btn_create(pet_panel_);
+        lv_obj_set_size(button, 132, 52);
+        lv_obj_align(button, LV_ALIGN_BOTTOM_MID,
+                     (col - 1) * 142, 78 - row * 60);
+        lv_obj_set_style_radius(button, 14, 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x2b3a5c), 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x3f6fa8), LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(button, 0, 0);
+
+        lv_obj_t* label = lv_label_create(button);
+        lv_label_set_text(label, kActions[i]);
+        lv_obj_center(label);
+        lv_obj_set_style_text_color(label, lv_color_white(), 0);
+        lv_obj_add_event_cb(button, PetButtonEventCb, LV_EVENT_CLICKED, this);
+        pet_buttons_[i] = button;
+    }
+
+
+    ESP_LOGI(TAG, "Pet panel ready (stats + 6 buttons, shared animation)");
+}
+
+void GrokbotDisplay::UpdatePetPanelFade() {
+    if (pet_panel_ == nullptr || !running_.load()) {
+        return;
+    }
+    const int target = pet_mode_active_.load() ? LV_OPA_COVER : LV_OPA_TRANSP;
+    int current = pet_panel_opa_.load();
+    if (current == target) {
+        // Keep the panel out of hit-testing once fully faded out.
+        if (target == LV_OPA_TRANSP && !lv_obj_has_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN)) {
+            DisplayLockGuard lock(this);
+            if (lock) {
+                lv_obj_add_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        return;
+    }
+    current += current < target ? kPetFadeStep : -kPetFadeStep;
+    if (current > target) current = target;
+    if (current < 0) current = 0;
+    pet_panel_opa_.store(current);
+
+    DisplayLockGuard lock(this);
+    if (!lock) {
+        return;
+    }
+    if (current > 0 && lv_obj_has_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_remove_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_set_style_opa(pet_panel_, static_cast<lv_opa_t>(current), 0);
+}
+
+void GrokbotDisplay::RefreshPetPanelLocked() {
+    if (pet_panel_ == nullptr || !pet_mode_active_.load()) {
+        return;
+    }
+    auto& pet = PetState::GetInstance();
+    const int values[6] = {pet.mood(), pet.satiety(), pet.energy(),
+                           pet.health(), pet.hygiene(), pet.fun()};
+    for (int i = 0; i < 6; ++i) {
+        if (pet_bars_[i] != nullptr) {
+            lv_bar_set_value(pet_bars_[i], values[i], LV_ANIM_OFF);
+        }
+    }
+    if (pet_title_ != nullptr) {
+        char buffer[96];
+        snprintf(buffer, sizeof(buffer), "小何 Lv.%d %s  互动 %d",
+                 pet.level(), pet.stageName(), pet.bonds());
+        lv_label_set_text(pet_title_, buffer);
+    }
+}
+
+void GrokbotDisplay::OnPetAction(int action) {
+    if (action < 0 || action > 5) {
+        return;
+    }
+    auto& pet = PetState::GetInstance();
+    const char* result = nullptr;
+    switch (action) {
+        case 0: result = pet.Feed(); break;
+        case 1: result = pet.Play(); break;
+        case 2: result = pet.Pet(); break;
+        case 3: result = pet.Clean(); break;
+        case 4: result = pet.Explore(); break;
+        case 5: result = pet.sleeping() ? pet.Wake() : pet.Sleep(); break;
+        default: break;
+    }
+    ESP_LOGI(TAG, "Pet action %d -> %s | %s", action, result != nullptr ? result : "(none)",
+             pet.Describe().c_str());
+
+    // Feedback stays INSIDE the pet panel.  ShowNotification() is deliberately
+    // avoided: it used to force EffectiveAnimationName() to "notifying" for
+    // seconds, hiding the very animation the action was supposed to trigger.
+    if (pet_feedback_ != nullptr) {
+        DisplayLockGuard lock(this);
+        if (lock) {
+            char feedback[160];
+            snprintf(feedback, sizeof(feedback), "%s", result != nullptr ? result : "");
+            lv_label_set_text(pet_feedback_, feedback);
+            lv_obj_remove_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+            RefreshPetPanelLocked();
+        }
+    }
+    pet_feedback_until_us_.store(NowUs() + 4000000);  // hide after 4 s
+}
+
+void GrokbotDisplay::SetPetMode(bool active) {
+    if (screen_locked_.load()) {
+        return;
+    }
+    if (pet_mode_active_.exchange(active) == active) {
+        return;
+    }
+    DisplayLockGuard lock(this);
+    if (!lock) {
+        return;
+    }
+    if (active) {
+        if (status_bar_ != nullptr) {
+            pet_saved_status_visible_ = !lv_obj_has_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (top_bar_ != nullptr) {
+            pet_saved_top_visible_ = !lv_obj_has_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (bottom_bar_ != nullptr) {
+            pet_saved_bottom_visible_ = !lv_obj_has_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (pet_panel_ != nullptr) {
+            lv_obj_remove_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_opa(pet_panel_, LV_OPA_TRANSP, 0);
+        }
+        pet_fade_in_.store(true);
+        pet_feedback_until_us_.store(0);
+        // Entering the pet page is an explicit "I want to play" signal. Wake a
+        // sleeping pet so every button is usable right away (otherwise all
+        // actions would be refused with "它睡着了" and look broken).
+        auto& pet = PetState::GetInstance();
+        if (pet.sleeping()) {
+            pet.Wake();
+            ESP_LOGI(TAG, "Pet was asleep -> auto wake on entering pet mode");
+        }
+        RefreshPetPanelLocked();
+        ESP_LOGI(TAG, "Pet mode ON (overlay fade-in, character stays live)");
+    } else {
+        pet_fade_in_.store(false);
+        if (pet_feedback_ != nullptr) {
+            lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (status_bar_ != nullptr && pet_saved_status_visible_) {
+            lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (top_bar_ != nullptr && pet_saved_top_visible_) {
+            lv_obj_remove_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (bottom_bar_ != nullptr && pet_saved_bottom_visible_) {
+            lv_obj_remove_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        ESP_LOGI(TAG, "Pet mode OFF (overlay fade-out, character stays live)");
+    }
+}
+
+void GrokbotDisplay::TogglePetMode() { SetPetMode(!pet_mode_active_.load()); }
 
 bool GrokbotDisplay::SetEmotion(const char* emotion) {
     const char* mapped = MapEmotion(emotion);
@@ -356,6 +643,13 @@ void GrokbotDisplay::SetStatus(const char* status) {
     }
     const char* mapped_status = MapStatus(status);
     requested_status_.store(mapped_status);
+    // Voice wake-up must always bring the user back to the assistant home
+    // screen: fade out the pet overlay while the character keeps animating.
+    if (mapped_status != nullptr && strcmp(mapped_status, "listening") == 0 &&
+        pet_mode_active_.load()) {
+        SetPetMode(false);
+        ESP_LOGI(TAG, "Voice wake-up: pet panel fading out to home");
+    }
     // When the device returns to idle, clear any AI-driven emotion so the
     // electronic pet's ambient expression takes over again.
     if (mapped_status != nullptr && strcmp(mapped_status, "idle") == 0) {
@@ -395,6 +689,14 @@ const char* GrokbotDisplay::EffectiveAnimationName() {
     }
     if (notification_until != 0) {
         notification_until_us_.store(0);
+    }
+
+    // In pet mode the pet's transient action animation takes priority (happy
+    // after feeding, excited after playing, playful after petting, shy after
+    // cleaning, etc.).  This is what makes the buttons visibly "do something"
+    // instead of only printing a line of text.
+    if (pet_mode_active_.load()) {
+        return PetState::GetInstance().SuggestEmotion();
     }
 
     const char* status = requested_status_.load();
@@ -643,7 +945,27 @@ void GrokbotDisplay::AnimationTask() {
     int64_t render_total_us = 0;
     uint32_t last_report_te_edges = te_edge_count_.load(std::memory_order_relaxed);
     uint32_t rendered_frames = 0;
+    int64_t last_pet_ui_us = NowUs();
     while (running_.load()) {
+        // Overlay fade + live stat bars are driven from the same task that
+        // decodes the character, so UI transitions never block or restart the
+        // animation.
+        UpdatePetPanelFade();
+        const int64_t ui_now = NowUs();
+        if (pet_mode_active_.load() && ui_now - last_pet_ui_us > 1000000LL) {
+            last_pet_ui_us = ui_now;
+            DisplayLockGuard lock(this);
+            if (lock) {
+                RefreshPetPanelLocked();
+                if (pet_feedback_until_us_.load() > 0 &&
+                    ui_now > pet_feedback_until_us_.load()) {
+                    pet_feedback_until_us_.store(0);
+                    if (pet_feedback_ != nullptr) {
+                        lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+                    }
+                }
+            }
+        }
         if (screen_locked_.load()) {
             // Screen is off: yield all CPU / PSRAM / QSPI bandwidth to audio.
             vTaskDelay(pdMS_TO_TICKS(100));

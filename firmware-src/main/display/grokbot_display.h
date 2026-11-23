@@ -29,7 +29,21 @@ public:
     // Pause the animation entirely while the user has locked the screen.
     void SetScreenLocked(bool locked);
 
+    // ---- Dedicated electronic-pet mode ------------------------------------
+    // The GrokBot character is a single image object shared by both screens.
+    // Entering/leaving pet mode only fades an overlay panel in/out - the
+    // animation task keeps decoding into the very same image, so the pet
+    // never freezes or restarts when switching views.
+    void SetPetMode(bool active);
+    void TogglePetMode();
+    bool IsPetModeActive() const { return pet_mode_active_.load(); }
+
 private:
+    void InitializePetPanel();
+    void UpdatePetPanelFade();
+    void RefreshPetPanelLocked();
+    void OnPetAction(int action);
+    static void PetButtonEventCb(lv_event_t* event);
     static void RounderEventCb(lv_event_t* event);
     static void AnimationTaskEntry(void* arg);
     static void TeIsr(void* arg);
@@ -83,6 +97,22 @@ private:
     std::atomic<int> target_fps_{30};
     std::atomic<bool> running_{false};
     std::atomic<bool> screen_locked_{false};
+
+    // Pet mode overlay (built on top of the shared character image).
+    lv_obj_t* pet_panel_ = nullptr;
+    lv_obj_t* pet_title_ = nullptr;
+    lv_obj_t* pet_feedback_ = nullptr;
+    lv_obj_t* pet_bars_[6] = {};
+    lv_obj_t* pet_buttons_[6] = {};
+    bool pet_saved_status_visible_ = true;
+    bool pet_saved_top_visible_ = true;
+    bool pet_saved_bottom_visible_ = true;
+    std::atomic<bool> pet_mode_active_{false};
+    std::atomic<bool> pet_fade_in_{false};
+    std::atomic<int> pet_panel_opa_{0};
+    std::atomic<int64_t> pet_feedback_until_us_{0};
+    std::atomic<bool> pet_ui_refresh_pending_{false};
+
     int64_t decode_us_total_ = 0;
     int64_t present_us_total_ = 0;
     TaskHandle_t task_handle_ = nullptr;
