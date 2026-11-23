@@ -44,7 +44,6 @@ M5Stack 的 StopWatch 上，GrokBot 这块「像素小怪物」屏幕很受欢�
 
 ```bash
 pip3 install esptool pyserial
-python3 tools/reconstruct-assets.py   # 还原仓库中的二进制文件
 ./tools/flash.sh                       # 刷机（保留 Wi-Fi 配网）
 ```
 
@@ -55,9 +54,8 @@ python3 tools/reconstruct-assets.py   # 还原仓库中的二进制文件
 ```
 firmware-src/   完整固件源码（基于 Ocean-lhy/xiaozhi-esp32 dev-grokbot）
 releases/       预编译固件（整片镜像 + 分分区组件 + 校验和）
-tools/          刷机 / 恢复 / 二进制还原脚本
+tools/          刷机 / 恢复脚本
 docs/           板型说明、移植补丁、发布说明
-encoded-assets/ 二进制文件的 base64 文本块
 ```
 
 ## 关于署名

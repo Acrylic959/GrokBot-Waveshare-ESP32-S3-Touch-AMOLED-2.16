@@ -27,8 +27,6 @@ pip3 install esptool pyserial
 | `parts/*.bin` | 分分区镜像，供 `tools/flash.sh` 保留 NVS 刷机 |
 | `SHA256SUMS` | 全部镜像校验和 |
 
-> 源码仓库中的二进制文件以 base64 文本块形式存放在 `encoded-assets/`，运行 `python3 tools/reconstruct-assets.py` 可还原；本 Release 的资产为还原后的原始二进制。
-
 ## 引用
 
 详见仓库 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。本项目是第三方移植增强，非上游官方仓库。

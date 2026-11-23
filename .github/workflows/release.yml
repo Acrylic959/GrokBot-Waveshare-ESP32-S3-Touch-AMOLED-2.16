@@ -4,8 +4,8 @@ on:
   push:
     branches: [main, master]
     paths:
-      - "encoded-assets/**"
-      - "releases/SHA256SUMS"
+      - "releases/**"
+      - "docs/RELEASE_NOTES.md"
       - ".github/workflows/release.yml"
   workflow_dispatch:
 
@@ -17,9 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Restore binary assets
-        run: python3 tools/reconstruct-assets.py
 
       - name: Verify merged firmware checksum
         run: |
