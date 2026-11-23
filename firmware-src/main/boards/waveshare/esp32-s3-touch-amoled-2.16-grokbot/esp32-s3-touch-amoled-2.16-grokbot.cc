@@ -202,7 +202,6 @@ private:
     Motion::AccelSample last_accel_;
     int volume_before_mute_ = -1;  // -1 = not muted; otherwise restored volume
     TaskHandle_t pet_task_handle_ = nullptr;
-    TaskHandle_t pet_touch_task_handle_ = nullptr;
 
     void UpdatePowerSaveTimer() {
         // Discharging enables the idle timer; a locked screen must suspend it so
@@ -443,133 +442,6 @@ private:
         }
     }
 
-    // ---- Electronic pet interactions -------------------------------------
-    void NotifyPet(const char* action, int ms = 2600) {
-        std::string text = std::string(action) + " " + PetState::GetInstance().Describe();
-        GetDisplay()->ShowNotification(text, ms);
-    }
-
-    void FeedPet() {
-        if (screen_locked_.load()) return;
-        NotifyPet(PetState::GetInstance().Feed());
-    }
-
-    void PlayWithPet() {
-        if (screen_locked_.load()) return;
-        NotifyPet(PetState::GetInstance().Play());
-    }
-
-    void CaressPet() {
-        if (screen_locked_.load()) return;
-        NotifyPet(PetState::GetInstance().Pet(), 2000);
-    }
-
-    void CleanPet() {
-        if (screen_locked_.load()) return;
-        NotifyPet(PetState::GetInstance().Clean());
-    }
-
-    void ExplorePet() {
-        if (screen_locked_.load()) return;
-        NotifyPet(PetState::GetInstance().Explore(), 3200);
-    }
-
-    void ToggleSleep() {
-        if (screen_locked_.load()) return;
-        if (PetState::GetInstance().sleeping()) {
-            NotifyPet(PetState::GetInstance().Wake());
-        } else {
-            NotifyPet(PetState::GetInstance().Sleep());
-        }
-    }
-
-    void ShowPetStatus() {
-        if (screen_locked_.load()) return;
-        std::string text = std::string("小何 \"") + PetState::GetInstance().Status() + "\"";
-        GetDisplay()->ShowNotification(text, 5000);
-    }
-
-    // Touch polling: LVGL events do NOT bubble to the parent screen, and the
-    // GrokBot image / status widgets sit on top of the screen and swallow
-    // LV_EVENT_CLICKED. Polling the indev state directly bypasses that entirely.
-    // lv_indev_get_point() returns logical (post-rotation) coordinates, so the
-    // bands stay correct in every orientation. Screen is split into 5 zones:
-    //   0-20%   play      20-40%  caress   40-60% clean
-    //   60-80%  feed      80-100% sleep/wake
-    // A double tap (two presses within 350 ms) anywhere triggers explore.
-    void HandlePetTouch(int x, int y) {
-        const int h = LV_VER_RES;
-        const int band = std::min(4, std::max(0, y * 5 / h));
-        switch (band) {
-            case 0: PlayWithPet(); break;
-            case 1: CaressPet(); break;
-            case 2: CleanPet(); break;
-            case 3: FeedPet(); break;
-            default: ToggleSleep(); break;
-        }
-    }
-
-    static void PetTouchTaskEntry(void* arg) {
-        auto* self = static_cast<WaveshareEsp32s3TouchAMOLED216GrokBot*>(arg);
-        self->PetTouchTask();
-        vTaskDelete(nullptr);
-    }
-
-    void PetTouchTask() {
-        bool was_pressed = false;
-        int64_t press_start_us = 0;
-        int64_t last_press_us = 0;
-        bool long_press_fired = false;
-        while (true) {
-            vTaskDelay(pdMS_TO_TICKS(30));
-            if (screen_locked_.load() || touch_indev_ == nullptr) {
-                was_pressed = false;
-                continue;
-            }
-            const bool pressed = lv_indev_get_state(touch_indev_) == LV_INDEV_STATE_PRESSED;
-            const int64_t now = esp_timer_get_time();
-            if (pressed && !was_pressed) {
-                press_start_us = now;
-                long_press_fired = false;
-            } else if (pressed && was_pressed) {
-                // Long press anywhere -> status page (fires once).
-                if (!long_press_fired && now - press_start_us > 1200000LL) {
-                    ShowPetStatus();
-                    long_press_fired = true;
-                }
-            } else if (!pressed && was_pressed) {
-                if (!long_press_fired) {
-                    // Short tap: double tap -> explore, else zone action.
-                    lv_point_t point;
-                    lv_indev_get_point(touch_indev_, &point);
-                    if (now - last_press_us < 350000LL) {
-                        ExplorePet();
-                        last_press_us = 0;
-                    } else {
-                        HandlePetTouch(point.x, point.y);
-                        last_press_us = now;
-                    }
-                    ESP_LOGI(TAG, "Pet touch at (%d,%d)", point.x, point.y);
-                }
-            }
-            was_pressed = pressed;
-        }
-    }
-
-    void InitializePetTouch() {
-        if (touch_indev_ == nullptr) {
-            ESP_LOGW(TAG, "Pet touch: no touch indev");
-            return;
-        }
-        if (xTaskCreate(PetTouchTaskEntry, "pet_touch", 2048, this, 2,
-                        &pet_touch_task_handle_) != pdPASS) {
-            pet_touch_task_handle_ = nullptr;
-            ESP_LOGW(TAG, "Failed to create pet touch task");
-        } else {
-            ESP_LOGI(TAG, "Pet touch ready (play/caress/clean/feed/sleep, double-tap=explore)");
-        }
-    }
-
     static void PetTaskEntry(void* arg) {
         auto* self = static_cast<WaveshareEsp32s3TouchAMOLED216GrokBot*>(arg);
         self->PetTask();
@@ -614,11 +486,11 @@ private:
             SetScreenLocked(!screen_locked_.load());
         });
 
-        // BOOT key: single -> chat, double -> feed, triple -> mute,
-        // long press -> lock.  Note: Button::OnMultipleClick keeps only ONE
-        // callback (later calls overwrite earlier ones), so only a single
-        // multi-click binding is used here. Other pet actions live on touch.
-        boot_button_.OnDoubleClick([this]() { FeedPet(); });
+        // BOOT key: single -> chat/配网, double -> toggle the dedicated pet
+        // mode page, triple -> mute, long press -> lock.  Home view has no
+        // touch interactions; all pet buttons live on the pet mode overlay.
+        // Button::OnMultipleClick keeps only ONE callback, hence one binding.
+        boot_button_.OnDoubleClick([this]() { display_->TogglePetMode(); });
         boot_button_.OnMultipleClick([this]() { ToggleMute(); }, 3);
     }
 
@@ -727,7 +599,6 @@ public:
         InitializeButtons();
         InitializeTools();
         InitializePet();
-        InitializePetTouch();
         InitializeAutoRotate();
         // Start with Wi-Fi modem sleep off; SetPowerSaveLevel will toggle it
         // back on only while the device is truly idle.

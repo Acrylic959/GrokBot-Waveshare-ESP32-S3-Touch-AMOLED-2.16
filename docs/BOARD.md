@@ -9,8 +9,8 @@
 | IMU | QMI8658，I2C 0x6B（备选 0x6A），SDA=15 / SCL=14 |
 | PMU | AXP2101，I2C 0x34 |
 | 音频 | ES8311 (DAC) + ES7210 (ADC)，I2S |
-| BOOT 键 | GPIO0；单击对话/配网、双击投喂、三击静音、长按 2000ms 锁屏 |
-| 触屏 | CST9217；v11 纵向五分区：玩/摸/洁/喂/睡 + 双击探险 + 长按状态页（输入设备轮询，非 LVGL 事件） |
+| BOOT 键 | GPIO0；单击对话/配网、双击进入/退出宠物模式、三击静音、长按 2000ms 锁屏 |
+| 触屏 | CST9217；v12 首页不响应触摸，宠物模式页六个 LVGL 按钮（事件直接绑按钮，非 screen） |
 
 ## 相对上游的改动
 
@@ -36,7 +36,7 @@
 | `main/boards/common/wifi_board.cc/.h` | v8 联网后固化公共 DNS + 3 秒后重设（防 DHCP 覆盖），根治 `api.tenclass.net` 解析失败 |
 | `main/audio/audio_codec.cc/.h` | v8 静音会话级（新增 `SetOutputVolume(volume, persist)`），开机音量默认 70 |
 | `main/protocols/*`, `main/mcp_server.*`, `main/ota.*` | v8 从上游 v2.6.0 全量合入，适配 `ProcessPending` / `AddClientCapabilities` / `AddSystemStatus` |
-| `CMakeLists.txt` | 版本号（当前 v11：`2.6.0-grokbot-v11`） |
+| `CMakeLists.txt` | 版本号（当前 v12：`2.6.0-grokbot-v12`） |
 | `sdkconfig` / 板型 `config.json` | v9 曾改 Multinet 自定义唤醒词；v10 起回退到 v8 的 AFE WakeNet `wn9_hiesp`，v11 保持不变 |
 | 板型 `config.h` | v10 删除 `ROTATE_FADE_*` / `ROTATE_FLIP_*` 动画参数，v11 保持不变 |
 | 板型 `.cc` | v10 删除全部旋转动画、宠物互动改触屏；v11 修复触屏（改轮询输入设备，绕开 LVGL 事件吞噬）、触屏纵向五分区 + 双击探险 + 长按状态页、AXP2101 I2C 探测重试 5 次避免热刷机重启、BOOT 双击投喂 |
@@ -55,7 +55,8 @@
 | v8 | 升级官方 v2.6.0 基线 + 固化公共 DNS 根治音频断续 + 音量修复 | `bcc53363` |
 | v9 | 物理仿真旋转动画 + Multinet 自定义唤醒词「你好小何」+ 电子宠物（BOOT 组合键互动） | `f26f33db` |
 | v10 | 回退 AFE 唤醒词 + 删除所有旋转动画 + 宠物互动改触屏三分区 | `95f2986e` |
-| **v11** | **修复触屏互动（输入设备轮询）+ 完整养成宠物系统 + AXP2101 热刷机稳定性修复** | **`5efaba44`** |
+| v11 | 修复触屏互动（输入设备轮询）+ 完整养成宠物系统 + AXP2101 热刷机稳定性修复 | `5efaba44` |
+| **v12** | **首页取消触摸 + 独立宠物模式页（属性条+六按钮）+ 按钮驱动差异化动画 + 语音唤醒渐隐 + 进页自动唤醒** | **`9f77b010`** |
 
 完整 SHA256 见 `releases/SHA256SUMS`。
 
