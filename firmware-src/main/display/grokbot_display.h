@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 #include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
@@ -27,6 +28,8 @@ public:
     void RemoveChatMessage(const char* role, const char* content) override;
     void ClearChatMessages() override;
     void ShowNotification(const char* notification, int duration_ms = 3000) override;
+    void ShowPetFeedbackText(const char* text);
+    void ShowPetFeedbackDeltas(const char* prefix, const int delta[4]);
     void ShowNotification(const std::string& notification, int duration_ms = 3000) override;
     void SetPowerSaveMode(bool on) override;
     // Pause the animation entirely while the user has locked the screen.
@@ -50,6 +53,7 @@ private:
     void NotePetInteraction();
     static void PetButtonEventCb(lv_event_t* event);
     static void PetPanelEventCb(lv_event_t* event);
+    void UpdatePetFeedbackLayout();
     static void RounderEventCb(lv_event_t* event);
     static void AnimationTaskEntry(void* arg);
     static void TeIsr(void* arg);
@@ -109,10 +113,11 @@ private:
     lv_obj_t* pet_title_ = nullptr;
     lv_obj_t* pet_subtitle_ = nullptr;
     lv_obj_t* pet_feedback_ = nullptr;
-    // Four rounded bars overlap at their ends to form one rounded rectangle.
-    lv_obj_t* pet_ring_ = nullptr;
-    lv_obj_t* pet_bars_[4] = {};
-    lv_obj_t* pet_stat_labels_[4] = {};
+    lv_obj_t* pet_feedback_prefix_ = nullptr;
+    lv_obj_t* pet_feedback_values_[4] = {};
+    // Four concentric rounded-rectangle progress rings (Apple Watch style).
+    lv_obj_t* pet_ring_lines_[4] = {};
+    lv_point_precise_t pet_ring_points_[4][320] = {};
     // Only 4 on-screen buttons: feed / play / clean / explore.
     lv_obj_t* pet_buttons_[4] = {};
     bool pet_saved_status_visible_ = true;

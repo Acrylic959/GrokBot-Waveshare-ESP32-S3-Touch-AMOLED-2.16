@@ -1,32 +1,44 @@
-# GrokBot AMOLED216 v18
+# GrokBot AMOLED216 v20
 
 预编译固件，适用于 **Waveshare ESP32-S3-Touch-AMOLED-2.16**（ESP32-S3R8 / 16MB Flash / 8MB PSRAM / 480×480 CO5300 AMOLED）。
 
-![v18 宠物页预览](images/pet_ui_v18_preview.png)
+![v20 宠物页预览](images/pet_ui_v20_rings_preview_v3.png)
 
-v17 的四根圆角条已经连成环，但预览反馈指出四处仍需调整：属性条文字偏大、左右竖条的字仍是横的、互动反馈字幕位置不对、左上角横竖条有重叠。v18 逐项修正，玩法、按键、动画映射与 DNS / 配网逻辑保持不变。
+按最终确认的预览重做宠物页：从四条属性条改为**四层同心圆角矩形运动环**，环上不再写属性名，互动反馈的数值按对应环颜色显示。v19 为中间尝试版本，未发布。
 
 ## 本版本变更
 
-### 1. 属性条文字改用 14px 字体
+### 1. 四层同心圆角矩形运动环
 
-本板正文字体是 `font_noto_sans_basic_20_4`，属性条只有 14px 高，20px 字会挤满整条。v18 给四个属性名显式设置 `font_noto_sans_basic_14_1`，字号与条高匹配。
+用四个 `lv_line` 对象绘制完整闭环，从外到内分别是：
 
-### 2. 左右竖条文字旋转 90°
+| 环 | 属性 | 颜色 | 边界 / 圆角 |
+| --- | --- | --- | --- |
+| 1 | 心情 | 青色 `#00E5FF` | 16..464 / r30 |
+| 2 | 健康 | 粉色 `#FF5C8A` | 28..452 / r25 |
+| 3 | 饱腹 | 琥珀 `#FFC857` | 40..440 / r20 |
+| 4 | 清洁 | 绿色 `#4ADE80` | 52..428 / r15 |
 
-v17 用 `健\n康` / `清\n洁` 竖排，每个字仍是正的。v18 改为完整词语 `健康` / `清洁`，并给标签加 900（0.1° 单位，即 90°）旋转，整词横置后转成竖向，符合竖条阅读方向。
+- 线宽统一 10px，圆角半径按 5px 递减，因此直线段和圆角处的间距一致。
+- 没有深色底轨道；未填充处直接露出黑屏。
+- 进度从顶部中点顺时针增长，首尾使用圆头（`lv_obj_set_style_line_rounded` + 重叠端点）。
+- 环上不再显示任何属性名称。
 
-### 3. 互动反馈移到等级下方
+### 2. 反馈字幕与彩色数值
 
-`pet_feedback_`（例如「好吃！心情 +8」）从角色下方 `y=310` 上移到 `y=122`，与 `pet_subtitle_` 一起位于等级 badge 下方、角色上方，不再压住 GrokBot 的脸。
+等级徽章上移到 `y=66`，反馈字幕紧贴其下 `y=102`。互动后按动作前后的数值差生成彩色片段：
 
-### 4. 四角不再重叠
+- 前缀为白色结果文字，例如「好吃！」。
+- 每个变化的属性显示为对应环色，例如「饱腹 +25」（琥珀）、「心情 +8」（青）。
+- 反馈显示 4 秒后自动隐藏，若助手字幕有内容则恢复显示助手字幕。
 
-v17 的横条与竖条在四角各重叠 14px，左上角能看到竖条深色端盖压住横条白填充。v18 改为：
+### 3. 布局调整
 
-- 横条保持完整跨度，独占四个圆角；
-- 竖条从顶条下沿 `y=32` 开始，到低条上沿 `y=448` 结束；
-- 二者只在边界相接，不再互相覆盖，圆角由横条自身 7px 端半径形成。
+按钮改为 `76×56`、间距 8px，整体下移到 `y=348`，与最内层环完全分开。等级徽章、反馈字幕上移贴近内环，中间区域留给 GrokBot 角色。
+
+### 4. 稳定性修复
+
+首次实机抓日志时发现：进入宠物页时 `SetPetMode()` 在持有显示互斥锁的状态下打日志，动画任务又可能在持有日志锁时等待显示锁，触发 ESP-IDF 日志锁超时断言并重启。v20 把 `PetState::Wake()` 与所有 `ESP_LOGI()` 移出显示锁作用域，实测进宠物页不再重启。
 
 ## 保留的玩法
 
@@ -36,43 +48,40 @@ v17 的横条与竖条在四角各重叠 14px，左上角能看到竖条深色�
 | 投喂 / 玩耍 / 清洁 / 探险 | 对应数值变化 | `happy` / `excited` / `shy` / `surprised` |
 | 点击屏幕中央角色 | 抚摸（防刷分冷却） | `playful` |
 | 宠物页静置 1 分钟 | 自动入睡 | `sleeping` |
-| 睡着后被唤醒 | — | `waking` |
 | 语音唤醒助手 | 宠物页渐隐回主界面 | — |
-
-中间角色始终是同一个 LVGL 图像对象，切页与动作期间动画不重建、不中断。
 
 ## 实机验证记录
 
-启动日志（`xiaozhi/logs/grokbot_boot_v18.log`）：
+启动日志（`xiaozhi/logs/grokbot_boot_v20.log`）：
 
 ```text
-I (106) app_init: App version:      2.6.0-grokbot-v18
+I (106) app_init: App version:      2.6.0-grokbot-v20
 I (240) WsAmoled216Grokbot: Button GPIO18 idle=1 -> active-low
 I (260) WsAmoled216Grokbot: Button GPIO16 idle=0 -> active-high
-I (1868) WsAmoled216Grokbot: Electronic pet ready: 心100 饱85 力41 健97 洁0 趣98
-I (1958) GrokbotDisplay: Pet panel ready (4 rounded bars form ring, contrast labels, subtitle under level)
-I (4546) WifiBoard: Static DNS applied ... readback=223.5.5.5 (err 0/0/0 rb=0)
-I (5991) MQTT: Connected to endpoint
+I (1868) WsAmoled216Grokbot: Electronic pet ready: 心100 饱81 力92 健97 洁48 趣90
+I (1955) GrokbotDisplay: Pet panel ready (4 concentric rounded rings, coloured deltas, subtitle under level)
+I (4587) WifiBoard: Static DNS applied ... readback=223.5.5.5 (err 0/0/0 rb=0)
+I (6255) MQTT: Connected to endpoint
 ```
 
 - 无 `AP started` → NVS 保留，自动配网成功。
-- 无 `ESP_ERROR_CHECK` / `Rebooting` / `abort` / E 级错误。
-- 视觉细节（字号、竖排方向、四角接缝、反馈位置）请按上方预览图在实机确认。
+- 无 `assert failed` / `Rebooting` / E 级错误。
+- 环的视觉细节与彩色反馈请按上方预览图在实机确认。
 
 ## 刷机
 
 ```bash
 pip3 install esptool pyserial
 ./tools/flash.sh /dev/cu.usbmodem2101                       # 保留 NVS（推荐）
-./flash_grokbot_v18.sh /dev/cu.usbmodem2101                 # 工作区内专用脚本
-./flash_grokbot_v18.sh /dev/cu.usbmodem2101 AUTO            # 跳过确认
+./flash_grokbot_v20.sh /dev/cu.usbmodem2101                 # 工作区内专用脚本
+./flash_grokbot_v20.sh /dev/cu.usbmodem2101 AUTO            # 跳过确认
 ```
 
-整片镜像 `grokbot_waveshare_amoled216_v18.bin`（SHA256 `1ba374bce58d5f9cb04a5cff032d5cd33b2ecd78523ac31388bdcad0ff5797af`）可直烧 0x0（会清 NVS，适合全新板子）。
+整片镜像 `grokbot_waveshare_amoled216_v20.bin`（SHA256 `31f8b74adb9a411702e0ad4ad40a3d2e4447fe747b7ad9ecc8107bde37f4b6b0`）可直烧 0x0（会清 NVS，适合全新板子）。
 
 ## 回滚
 
-`./flash_grokbot_v17.sh`（工作区内，保留 NVS）。`releases/` 保留 v6–v18 全部镜像与分分区组件。
+`./flash_grokbot_v18.sh`（工作区内，保留 NVS）。`releases/` 保留 v6–v20（跳过未发布的 v19）全部镜像与分分区组件。
 
 ## 引用
 
