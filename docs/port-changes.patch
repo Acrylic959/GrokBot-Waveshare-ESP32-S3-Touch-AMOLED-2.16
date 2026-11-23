@@ -1,0 +1,239 @@
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+index dea6691..6dd5811 100644
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -433,6 +433,13 @@ elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16)
+     set(BUILTIN_TEXT_FONT font_noto_sans_basic_30_4)
+     set(BUILTIN_ICON_FONT font_material_symbols_30_4)
+     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
++elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT)
++    set(BOARD_DIR "waveshare/esp32-s3-touch-amoled-2.16-grokbot")
++    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
++    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
++    set(DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/boards/waveshare/esp32-s3-touch-amoled-2.16-grokbot/assets")
++    list(APPEND SOURCES "display/grokbot_display.cc" "display/grokbot_player.cc")
++    list(APPEND MAIN_PRIV_REQUIRES_EXTRA esp_rom)
+ elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_1_43C)
+     set(BOARD_DIR "waveshare/esp32-s3-touch-amoled-1.43c")
+     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+diff --git a/main/Kconfig.projbuild b/main/Kconfig.projbuild
+index fc6440d..3894bae 100644
+--- a/main/Kconfig.projbuild
++++ b/main/Kconfig.projbuild
+@@ -601,6 +601,9 @@ choice BOARD_TYPE
+     config BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16
+         bool "Waveshare ESP32-S3-Touch-AMOLED-2.16"
+         depends on IDF_TARGET_ESP32S3
++    config BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT
++        bool "Waveshare ESP32-S3-Touch-AMOLED-2.16 GrokBot"
++        depends on IDF_TARGET_ESP32S3
+     config BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_46
+         bool "Waveshare ESP32-S3-Touch-LCD-1.46"
+         depends on IDF_TARGET_ESP32S3
+diff --git a/main/audio/audio_codec.h b/main/audio/audio_codec.h
+index a267dbb..ca2f5af 100644
+--- a/main/audio/audio_codec.h
++++ b/main/audio/audio_codec.h
+@@ -12,8 +12,17 @@
+ 
+ #include "board.h"
+ 
++// Boards with a tight PSRAM/flash shared bus need deeper I2S DMA buffering and
++// a higher interrupt priority so the GrokBot animation cannot starve the audio.
++#if CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT
++#define AUDIO_CODEC_DMA_DESC_NUM 8
++#define AUDIO_CODEC_DMA_FRAME_NUM 360   // 8*360 frames @24kHz = 120ms
++#define AUDIO_CODEC_I2S_INTR_PRIO 3     // preempt display/LVGL traffic
++#else
+ #define AUDIO_CODEC_DMA_DESC_NUM 6
+ #define AUDIO_CODEC_DMA_FRAME_NUM 240
++#define AUDIO_CODEC_I2S_INTR_PRIO 0
++#endif
+ 
+ // ESP-IDF 6 removed i2s_port_t and changed i2s_chan_config_t::id to an integer.
+ // Keep numeric I2S controller IDs usable on targets where IDF 5 does not expose
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+index 358a094..5e801ca 100644
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -132,14 +132,15 @@ void AudioService::Start() {
+         },
+         "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);
+ 
+-    /* Start the audio output task */
+-    xTaskCreate(
++    /* Start the audio output task. Pin to core 1 so the I2S feed is isolated
++     * from Wi-Fi RX and the GrokBot animation decoder running on core 0. */
++    xTaskCreatePinnedToCore(
+         [](void* arg) {
+             AudioService* audio_service = (AudioService*)arg;
+             audio_service->AudioOutputTask();
+             vTaskDelete(NULL);
+         },
+-        "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
++        "audio_output", 2048 * 2, this, 6, &audio_output_task_handle_, 1);
+ #else
+     /* Start the audio input task */
+     xTaskCreate(
+@@ -150,24 +151,27 @@ void AudioService::Start() {
+         },
+         "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
+ 
+-    /* Start the audio output task */
+-    xTaskCreate(
++    /* Start the audio output task. Pin to core 1 so the I2S feed is isolated
++     * from Wi-Fi RX and the GrokBot animation decoder running on core 0. */
++    xTaskCreatePinnedToCore(
+         [](void* arg) {
+             AudioService* audio_service = (AudioService*)arg;
+             audio_service->AudioOutputTask();
+             vTaskDelete(NULL);
+         },
+-        "audio_output", 2048, this, 4, &audio_output_task_handle_);
++        "audio_output", 2048, this, 6, &audio_output_task_handle_, 1);
+ #endif
+ 
+-    /* Start the opus codec task */
+-    xTaskCreate(
++    /* Opus decode/encode runs on core 1 next to the output task, so decoded
++     * PCM never crosses cores and the playback queue stays filled. Priority 5
++     * keeps it above LVGL/animation (1) without starving Wi-Fi on core 0. */
++    xTaskCreatePinnedToCore(
+         [](void* arg) {
+             AudioService* audio_service = (AudioService*)arg;
+             audio_service->OpusCodecTask();
+             vTaskDelete(NULL);
+         },
+-        "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
++        "opus_codec", 2048 * 12, this, 5, &opus_codec_task_handle_, 1);
+ }
+ 
+ void AudioService::Stop() {
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+index b79d033..1e58ec6 100644
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -39,7 +39,10 @@
+ 
+ #define OPUS_FRAME_DURATION_MS 60
+ #define MAX_ENCODE_TASKS_IN_QUEUE 2
+-#define MAX_PLAYBACK_TASKS_IN_QUEUE 2
++// Deep PCM playback queue: 8 x 60ms = 480ms of buffered audio. The original
++// depth of 2 (120ms) starved whenever the LVGL/GrokBot animation or a Wi-Fi
++// RX burst preempted the opus decoder, producing audible stutter.
++#define MAX_PLAYBACK_TASKS_IN_QUEUE 8
+ #define MAX_DECODE_PACKETS_IN_QUEUE (1200 / OPUS_FRAME_DURATION_MS)
+ #define MAX_SEND_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)
+ #define AUDIO_TESTING_MAX_DURATION_MS 10000
+diff --git a/main/audio/codecs/box_audio_codec.cc b/main/audio/codecs/box_audio_codec.cc
+index 952bb5c..d65852a 100644
+--- a/main/audio/codecs/box_audio_codec.cc
++++ b/main/audio/codecs/box_audio_codec.cc
+@@ -105,7 +105,7 @@ void BoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_
+         .dma_frame_num = AUDIO_CODEC_DMA_FRAME_NUM,
+         .auto_clear_after_cb = true,
+         .auto_clear_before_cb = false,
+-        .intr_priority = 0,
++        .intr_priority = AUDIO_CODEC_I2S_INTR_PRIO,
+     };
+     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_));
+ 
+diff --git a/main/display/grokbot_display.cc b/main/display/grokbot_display.cc
+index 9165823..cd695e9 100644
+--- a/main/display/grokbot_display.cc
++++ b/main/display/grokbot_display.cc
+@@ -18,7 +18,13 @@ constexpr const char* kAtlasName = "grokbot.atlas";
+ constexpr int kRoundEdgeInset = 56;
+ constexpr int kRoundStatusTop = 56;
+ constexpr int kRoundChatBottom = 66;
+-constexpr int kNormalFps = 30;
++// Each GrokBot frame inflates a zlib delta, expands 4-bit grayscale to RGB565
++// and pushes 360x360 pixels over QSPI. At 30 FPS this saturates CPU, PSRAM,
++// QSPI and GDMA, starving the I2S audio DMA and making the sound stutter.
++// Keep the idle animation at 20 FPS and drop to 8 FPS whenever the audio
++// pipeline is active (listening / speaking / notification playback).
++constexpr int kNormalFps = 20;
++constexpr int kAudioBusyFps = 8;
+ constexpr int kPowerSaveFps = 5;
+ constexpr uint32_t kPanelTeHz = 60;
+ 
+@@ -368,6 +374,11 @@ void GrokbotDisplay::SetPowerSaveMode(bool on) {
+     LvglDisplay::SetPowerSaveMode(on);
+ }
+ 
++void GrokbotDisplay::SetScreenLocked(bool locked) {
++    screen_locked_.store(locked);
++    ESP_LOGI(TAG, "Animation %s by screen lock", locked ? "paused" : "resumed");
++}
++
+ int64_t GrokbotDisplay::NowUs() const { return esp_timer_get_time(); }
+ 
+ const char* GrokbotDisplay::EffectiveAnimationName() {
+@@ -615,6 +626,12 @@ void GrokbotDisplay::AnimationTask() {
+     uint32_t last_report_te_edges = te_edge_count_.load(std::memory_order_relaxed);
+     uint32_t rendered_frames = 0;
+     while (running_.load()) {
++        if (screen_locked_.load()) {
++            // Screen is off: yield all CPU / PSRAM / QSPI bandwidth to audio.
++            vTaskDelay(pdMS_TO_TICKS(100));
++            next_frame_us = NowUs();
++            continue;
++        }
+         if (assets_update_in_progress_.load()) {
+             vTaskDelay(pdMS_TO_TICKS(100));
+             continue;
+@@ -624,9 +641,16 @@ void GrokbotDisplay::AnimationTask() {
+             continue;
+         }
+ 
+-        const int fps = std::max(1, target_fps_.load());
+-        const int64_t frame_us = 1000000LL / fps;
+         const char* effective = EffectiveAnimationName();
++        int fps = std::max(1, target_fps_.load());
++        // "listening" / "streaming" are the mapped states for LISTENING / SPEAKING.
++        // "notifying" accompanies TTS playback. Throttle hard so the audio tasks
++        // can keep their I2S DMA buffers filled without competing with the atlas.
++        if (strcmp(effective, "listening") == 0 || strcmp(effective, "streaming") == 0 ||
++            strcmp(effective, "notifying") == 0) {
++            fps = std::min(fps, kAudioBusyFps);
++        }
++        const int64_t frame_us = 1000000LL / fps;
+         if (!has_selected_ || strcmp(player_.selected_name(), effective) != 0) {
+             if (player_.select_name(effective)) {
+                 player_.seek(player_.start_frame());
+@@ -719,9 +743,10 @@ void GrokbotDisplay::AnimationTask() {
+             const uint32_t avg_te_wait_us =
+                 te_waits > 0 ? static_cast<uint32_t>(te_wait_us_total / te_waits) : 0;
+             ESP_LOGI(TAG,
+-                     "Animation fps=%u.%02u render=%uus decode=%uus present=%uus "
++                     "Animation fps=%u.%02u target=%d locked=%d render=%uus decode=%uus present=%uus "
+                      "te_wait=%uus te_hz=%u te_timeout=%u state=%s",
+                      fps_hundredths / 100, fps_hundredths % 100,
++                     target_fps_.load(), static_cast<int>(screen_locked_.load()),
+                      static_cast<unsigned>(avg_render_us), static_cast<unsigned>(avg_decode_us),
+                      static_cast<unsigned>(avg_present_us), static_cast<unsigned>(avg_te_wait_us),
+                      static_cast<unsigned>(
+diff --git a/main/display/grokbot_display.h b/main/display/grokbot_display.h
+index 0243b26..e903545 100644
+--- a/main/display/grokbot_display.h
++++ b/main/display/grokbot_display.h
+@@ -26,6 +26,8 @@ public:
+     void ShowNotification(const char* notification, int duration_ms = 3000) override;
+     void ShowNotification(const std::string& notification, int duration_ms = 3000) override;
+     void SetPowerSaveMode(bool on) override;
++    // Pause the animation entirely while the user has locked the screen.
++    void SetScreenLocked(bool locked);
+ 
+ private:
+     static void RounderEventCb(lv_event_t* event);
+@@ -78,8 +80,9 @@ private:
+     std::atomic<int64_t> notification_until_us_{0};
+     std::atomic<bool> assets_update_in_progress_{false};
+     std::atomic<bool> atlas_refresh_required_{false};
+-    std::atomic<int> target_fps_{30};
++    std::atomic<int> target_fps_{20};
+     std::atomic<bool> running_{false};
++    std::atomic<bool> screen_locked_{false};
+     int64_t decode_us_total_ = 0;
+     int64_t present_us_total_ = 0;
+     TaskHandle_t task_handle_ = nullptr;
