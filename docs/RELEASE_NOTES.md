@@ -1,80 +1,74 @@
-# GrokBot AMOLED216 v12
+# GrokBot AMOLED216 v13
 
 预编译固件，适用于 **Waveshare ESP32-S3-Touch-AMOLED-2.16**（ESP32-S3R8 / 16MB Flash / 8MB PSRAM / 480×480 CO5300 AMOLED）。
 
-本版本按实际使用反馈重做交互架构：v11 把宠物互动做成首页触屏分区，但点击只弹文字、看不到动画变化，被评价为"文字游戏"。v12 把宠物玩法收进**独立页面**，让每个按钮真正驱动一个不同的动画。
+v12 的宠物页有 three 个实机问题：属性面板挡住角色脸、只有 3 个按钮可见、语音唤醒没有渐隐。v13 逐项修复，并按你提供的原理图按键定义重新分配交互。
 
-## 本版本新增 / 变更
+## 本版本修复 / 变更
 
-### 1. 独立电子宠物模式页
+### 1. 宠物页 UI 重构（不再挡画面、按钮更大更全）
 
-- **首页取消触摸交互**：首页只保留状态栏、字幕和 GrokBot 动画，触摸不再触发任何宠物动作。
-- **BOOT 双击进入宠物页**：顶部是标题（小何 Lv.X · 成长阶段 · 互动次数）与六条实时属性条（心情/饱腹/活力/健康/清洁/乐趣）；底部是六个交互按钮；中间完全镂空，露出正在播放的 GrokBot 形象。
-- **进页自动唤醒**：若宠物处于睡眠状态，进入宠物页时自动唤醒，保证每个按钮立即可用（v11 中睡着时所有动作都会被拒绝，看起来像失灵）。
-- **语音唤醒渐隐返回**：检测到 `LISTENING` 状态时宠物页淡出、主界面恢复，全程无需额外按键。
+- **属性条移到左右两侧**：v12 顶部 176px 高的面板遮住了角色上半身。v13 把 6 条属性条改成左右各 3 条 slim 条（128×50，半透明），**中间完全镂空**，GrokBot 全脸可见。
+- **六个大按钮单行排布**：v12 用两行按钮且 Y 偏移为正值，第二行被推到屏幕外（只剩 3 个可见）。v13 改为底部单行 6 个 **66×66** 大按钮，X 居中分布在 [60,420] 安全区内，全部可见、触控面积更大。
+- **标题紧凑化**：缩为顶部小胶囊，不再占用画面中央。
 
-### 2. 按钮真正触发不同动画（核心修复）
+### 2. 按原理图按键定义重构交互
 
-v11 每次点击都会调用全局 `ShowNotification()`，使动画选择器在数秒内强制返回 `notifying`，把动作动画完全盖住——这就是"只有文字、没有动画"的根因。v12：
+| 按键 | GPIO | 首页 | 宠物页 |
+| --- | --- | --- | --- |
+| BOOT | GPIO0 | 单击对话/配网、三击静音、长按锁屏 | 同左 |
+| Key3（CHIP_PU） | GPIO18 | 单击进入宠物模式 | 单击/长按退出宠物模式 |
+| SYS_OUT | GPIO16 | 单击静音 | 单击探险、双击睡觉/唤醒、长按退出 |
 
-- 动作反馈改为宠物页内的局部文字，**不再抢占全局动画通道**；
-- 宠物模式下的动画完全由 `PetState::SuggestEmotion()` 的动作状态驱动。
+BOOT 上不再绑定双击（避免误触），进出宠物模式交给专用 Key3。辅助按键设为高电平有效，并加 5 秒开机保护，避免上电抖动误触锁屏。
 
-实机自检验证（6 个按钮依次点击后的动画切换）：
+### 3. 修复语音唤醒渐隐
 
-| 按钮 | 动画 | 日志证据 |
-| --- | --- | --- |
-| 投喂 | `happy` | `Pet action 0 -> 投喂成功` → `Animation -> happy` |
-| 玩耍 | `excited` | `Pet action 1 -> 玩得开心` → `Animation -> excited` |
-| 抚摸 | `playful` | `Pet action 2 -> 舒服~` → `Animation -> playful` |
-| 清洁 | `shy` | `Pet action 3 -> 洗得香香的` → `Animation -> shy` |
-| 探险 | `surprised` | `Pet action 4 -> 探险：发现新玩具` → `Animation -> surprised` |
-| 睡觉 | `sleeping` | `Pet action 5 -> 晚安，Zzz` → `Animation -> sleeping` |
+**根因**：刷机复位后 BOOT/GPIO 引脚抖动触发了"长按锁屏"，`SetPetMode()` 开头的 `screen_locked_` 检查把渐隐直接拦截了——所以唤醒时宠物页不消失。
 
-### 3. 动画全程连贯
+**修复**：
+- 动画循环直接轮询 `requested_status_`，一旦是 `listening` 就强制退出宠物模式（不依赖 `SetStatus` 调用时机）；
+- 辅助按键长按加开机 5 秒保护 + SYS_OUT 长按改为退出宠物模式（不再锁屏），消除误锁屏来源。
 
-GrokBot 形象是**同一个 LVGL 图像对象**，由独立动画任务持续解码渲染。切换页面只在它上层淡入/淡出一个透明覆盖面板，从不销毁或重建图像对象；进宠物页、点按钮、语音唤醒返回的全过程中动画不中断、不跳帧。
+自检验证（随后已移除自检代码）：
 
-### 4. BOOT 按键
+```
+=== V13 SELFTEST BEGIN ===
+Pet mode ON (overlay fade-in, character stays live)
+Pet action 0 -> 投喂成功
+SELFTEST: simulate LISTENING status
+Pet mode OFF (overlay fade-out, character stays live)
+Voice wake-up: pet panel fading out to home
+Animation -> listening
+```
 
-| 操作 | 效果 |
-| --- | --- |
-| 单击 | 对话 / 配网 |
-| 双击 | 进入 / 退出电子宠物模式 |
-| 三击 | 静音 / 恢复（会话级，不写 NVS） |
-| 长按 2 秒 | 锁屏 / 解锁 |
+### 4. 继承 v12 的能力
 
-## 继承 v1–v11 的能力
-
-- 完整养成系统：六维数值 + 等级 + 成长阶段 + 睡眠 + 探险事件 + 抚摸防刷分 + 待机小动作 + 7 项成就，NVS 持久化与离线衰减，宠物永不死亡
-- v2.6.0 官方基线、AFE WakeNet `wn9_hiesp` 唤醒词
-- 四向自动旋转（直接切换、无动画）、GrokBot 30 FPS 动画
-- 音频链路全套优化 + 公共 DNS 固化
-- AXP2101 热刷机稳定性修复
-- 刷机保留 NVS（Wi-Fi 凭据、设备 token、宠物状态），自动配网
+- 六个按钮各驱动一种不同动画（happy / excited / playful / shy / surprised / sleeping）
+- 进宠物模式自动唤醒睡着的宠物；动作反馈在面板内显示，不抢占全局动画
+- 中间 GrokBot 形象始终是同一个对象，切页只淡入淡出覆盖层，动画连贯
+- v2.6.0 官方基线、AFE `wn9_hiesp` 唤醒词、四向旋转、30 FPS、DNS 固化、AXP2101 稳定性、保留 NVS
 
 ## 验证记录（实机）
 
-- `App version: 2.6.0-grokbot-v12`；`Init AXP2101` 正常，无重启循环
-- `Pet panel ready (stats + 6 buttons, shared animation)`；`Electronic pet ready: ...`
-- 六按钮自检：`Animation -> happy / excited / playful / shy / surprised / sleeping` 全部命中
-- `Pet mode ON / OFF` 淡入淡出正常，动画对象未重建
-- `Model 0: wn9_hiesp`；`Static DNS ... readback=223.5.5.5`；`MQTT: Connected`；`Activation done`
-- 无 `AP started`（NVS 保留、自动连 Wi-Fi），无 E 级错误
+- `App version: 2.6.0-grokbot-v13`；`Pet panel ready`；`Electronic pet ready`
+- 自检：进入宠物模式 → 投喂 → 模拟 LISTENING → `Pet mode OFF` + `Voice wake-up: ... fading out` → `Animation -> listening`
+- 开机日志无 `Screen locked`（启动保护生效），无 `AP started`（自动配网），无 E 级错误
+- `Static DNS ... readback=223.5.5.5`；`MQTT: Connected`；`Model 0: wn9_hiesp`
 
 ## 刷机
 
 ```
 pip3 install esptool pyserial
-./flash_grokbot_v12.sh /dev/cu.usbmodem2101        # 保留 NVS（推荐）
+./flash_grokbot_v13.sh /dev/cu.usbmodem2101        # 保留 NVS（推荐）
 ```
 
-整片镜像 `grokbot_waveshare_amoled216_v12.bin` 可直接烧录到 0x0（会清 NVS，适合全新板子）。分分区脚本保留 NVS，适合已有配网/宠物数据的设备。
+整片镜像 `grokbot_waveshare_amoled216_v13.bin` 可直烧 0x0（会清 NVS，适合全新板子）。
 
 ## 回滚
 
-如需回到上一版本：`./flash_grokbot_v11.sh`（工作区内，保留 NVS）。发布目录内保留 v6–v12 镜像可回滚。
+`./flash_grokbot_v12.sh`（工作区内，保留 NVS）。发布目录保留 v6–v13 镜像。
 
 ## 引用
 
-完整养成玩法设计参考 DigiCat、ESP32-TamaPetchi、ESP32-C6 Desk Pet、小鲸鲸鱼娘宠物等开源项目，详见仓库 [THIRD_PARTY_NOTICES.md](https://github.com/Acrylic959/grokbot-amoled216/blob/master/THIRD_PARTY_NOTICES.md) 与 [README](https://github.com/Acrylic959/grokbot-amoled216/blob/master/README.md)。本项目是第三方移植增强，非上游官方仓库。上游小智固件来自 [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) v2.6.0。
+玩法设计参考 DigiCat、ESP32-TamaPetchi、ESP32-C6 Desk Pet、小鲸鲸鱼娘宠物等开源项目，详见 [THIRD_PARTY_NOTICES.md](https://github.com/Acrylic959/grokbot-amoled216/blob/master/THIRD_PARTY_NOTICES.md)。本项目是第三方移植增强，非上游官方仓库。

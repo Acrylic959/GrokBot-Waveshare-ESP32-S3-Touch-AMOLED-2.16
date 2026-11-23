@@ -190,6 +190,8 @@ private:
     i2c_master_bus_handle_t i2c_bus_;
     Pmic* pmic_ = nullptr;
     Button boot_button_;
+    Button key3_button_;
+    Button sys_out_button_;
     GrokbotDisplay* display_;
     CustomBacklight* backlight_;
     esp_io_expander_handle_t io_expander = NULL;
@@ -202,6 +204,7 @@ private:
     Motion::AccelSample last_accel_;
     int volume_before_mute_ = -1;  // -1 = not muted; otherwise restored volume
     TaskHandle_t pet_task_handle_ = nullptr;
+    int64_t boot_ready_us_ = 0;  // ignore auxiliary-key long press during boot
 
     void UpdatePowerSaveTimer() {
         // Discharging enables the idle timer; a locked screen must suspend it so
@@ -486,12 +489,52 @@ private:
             SetScreenLocked(!screen_locked_.load());
         });
 
-        // BOOT key: single -> chat/配网, double -> toggle the dedicated pet
-        // mode page, triple -> mute, long press -> lock.  Home view has no
-        // touch interactions; all pet buttons live on the pet mode overlay.
-        // Button::OnMultipleClick keeps only ONE callback, hence one binding.
-        boot_button_.OnDoubleClick([this]() { display_->TogglePetMode(); });
+        // BOOT (GPIO0): single -> chat/配网, triple -> mute, long -> lock.
+        // Pet mode toggle moved to Key3 so BOOT keeps only assistant actions.
         boot_button_.OnMultipleClick([this]() { ToggleMute(); }, 3);
+
+        // Key3 (GPIO18, schematic CHIP_PU): dedicated pet mode toggle.
+        // Single press enters/leaves the pet page from BOTH views.
+        key3_button_.OnClick([this]() {
+            if (screen_locked_.load()) return;
+            ESP_LOGI(TAG, "Key3 press -> pet mode toggle");
+            display_->TogglePetMode();
+        });
+        key3_button_.OnLongPress([this]() {
+            // Long press Key3 exits pet mode directly (handy if touch is busy).
+            if (screen_locked_.load()) return;
+            if (display_->IsPetModeActive()) {
+                display_->SetPetMode(false);
+            }
+        });
+
+        // SYS_OUT (GPIO16): pet-mode quick actions; on home it is a mute shortcut.
+        sys_out_button_.OnClick([this]() {
+            if (screen_locked_.load()) return;
+            ESP_LOGI(TAG, "SYS_OUT press");
+            if (display_->IsPetModeActive()) {
+                display_->TriggerPetAction(4);  // 探险
+            } else {
+                ToggleMute();
+            }
+        });
+        sys_out_button_.OnDoubleClick([this]() {
+            if (screen_locked_.load()) return;
+            if (display_->IsPetModeActive()) {
+                display_->TriggerPetAction(5);  // 睡觉 / 唤醒
+            }
+        });
+        sys_out_button_.OnLongPress([this]() {
+            // Ignore spurious long presses during boot (aux pins may float).
+            if (esp_timer_get_time() - boot_ready_us_ < 5000000LL) {
+                ESP_LOGW(TAG, "SYS_OUT long press ignored (boot guard)");
+                return;
+            }
+            if (screen_locked_.load()) return;
+            if (display_->IsPetModeActive()) {
+                display_->SetPetMode(false);
+            }
+        });
     }
 
     void InitializeDisplay() {
@@ -586,7 +629,9 @@ private:
 
 public:
     WaveshareEsp32s3TouchAMOLED216GrokBot()
-        : boot_button_(BOOT_BUTTON_GPIO, false, SCREEN_LOCK_LONG_PRESS_MS) {
+        : boot_button_(BOOT_BUTTON_GPIO, false, SCREEN_LOCK_LONG_PRESS_MS),
+          key3_button_(KEY3_BUTTON_GPIO, true, SCREEN_LOCK_LONG_PRESS_MS),
+          sys_out_button_(SYS_OUT_BUTTON_GPIO, true, SCREEN_LOCK_LONG_PRESS_MS) {
         InitializePowerSaveTimer();
         InitializeCodecI2c();
 #if CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_1_75
@@ -603,6 +648,7 @@ public:
         // Start with Wi-Fi modem sleep off; SetPowerSaveLevel will toggle it
         // back on only while the device is truly idle.
         SetWifiPowerSave(false);
+        boot_ready_us_ = esp_timer_get_time();
     }
 
     virtual AudioCodec* GetAudioCodec() override {

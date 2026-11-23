@@ -26,6 +26,10 @@
 
 #define I2C_ADDRESS         ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000
 #define BOOT_BUTTON_GPIO GPIO_NUM_0
+// Key3 (schematic CHIP_PU) -> dedicated electronic-pet mode toggle.
+#define KEY3_BUTTON_GPIO GPIO_NUM_18
+// SYS_OUT (schematic label) -> pet quick actions / mute shortcut.
+#define SYS_OUT_BUTTON_GPIO GPIO_NUM_16
 
 #define EXAMPLE_PIN_NUM_LCD_CS GPIO_NUM_12
 #define EXAMPLE_PIN_NUM_LCD_PCLK GPIO_NUM_38
