@@ -6,7 +6,7 @@
 
 > 本仓库是**移植与增强项目**，不是上述任一上游项目的官方仓库。所有原始代码的版权归各自作者所有，详见 [引用与致谢](#引用与致谢) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-> 想要一个直接可刷的固件镜像？去 [Releases](../../releases/tag/v11) 下载 `grokbot_waveshare_amoled216_v11.bin`，或按下方「刷机」步骤用分分区镜像保留 Wi-Fi 配网。
+> 想要一个直接可刷的固件镜像？去 [Releases](https://github.com/Acrylic959/grokbot-amoled216/releases/tag/v11) 下载 `grokbot_waveshare_amoled216_v11.bin`，或按下方「刷机」步骤用分分区镜像保留 Wi-Fi 配网。
 
 ## 功能
 
