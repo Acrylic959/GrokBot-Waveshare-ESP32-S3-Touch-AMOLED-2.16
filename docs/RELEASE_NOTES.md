@@ -1,10 +1,34 @@
-# GrokBot AMOLED216 v22
+# GrokBot AMOLED216 v23
 
 预编译固件，适用于 **Waveshare ESP32-S3-Touch-AMOLED-2.16**（ESP32-S3R8 / 16MB Flash / 8MB PSRAM / 480×480 CO5300 AMOLED）。
 
 ![宠物页预览](images/pet_ui_v20_rings_preview_v3.png)
 
-v22 修复三个实机反馈问题，界面样式不变。
+v23 修复省电降亮度后点击屏幕崩溃的问题，并按要求把退出省电的方式收敛为「仅 PWR 单击」。界面样式不变。
+
+## v23 变更
+
+用户反馈：v22 在省电模式自动降亮度后点击屏幕会崩溃重启。
+
+**根因**：v22 通过 `esp_lcd_touch_register_interrupt_callback()` 注册了触摸唤醒回调，而该函数内部用 `gpio_isr_handler_add()` 安装回调——它运行在 **GPIO 中断（ISR）上下文**。回调里直接调用 `WakeFromPowerSave()` → `SetPowerSaveMode()`（显示锁 + LVGL API）和 `RestoreBrightness()`（NVS 读写 + esp_timer + 面板 I2C 写），全部是**非 ISR-safe** 操作，省电降亮度后触摸立即触发崩溃。非省电时 `WakeUp()` 只重置空闲计数（极轻量），所以平时点击不崩——这正好解释了「只在省电时崩」。此外该注册还会覆盖 LVGL 自己的触摸中断回调（单槽位），干扰正常事件驱动触摸。
+
+**修复**（按用户后续要求收敛交互）：
+
+- 完全移除触摸中断唤醒回调及配套的静态实例指针；触摸不再唤醒省电。
+- 移除 BOOT 单击、Key3 按下中的 `WakeFromPowerSave()`；这两个键不再唤醒省电。
+- **只保留 PWR（SYS_OUT / GPIO16）单击** 调用 `WakeFromPowerSave()` 退出省电模式。
+- `WakeFromPowerSave()` 仍保留锁屏保护：锁屏时直接返回，保持黑暗直到 BOOT 长按解锁。
+- 保留 v22 全部功能（探险 10 事件、字幕去重、角色裁剪渲染、四层运动环、摇一摇头晕）。
+
+**实机验证（2026-11-24）**：刷入 `App version: 2.6.0-grokbot-v23`，`Atlas ready` / `Pet panel ready` / `Touch panel initialized successfully` 全部正常，启动日志无 `assert failed` / `Rebooting`。省电触发后的触摸不再崩溃、PWR 单击唤醒需在电池供电下复现（见下方说明）。
+
+镜像：`grokbot_waveshare_amoled216_v23.bin`（SHA256 `af177357d96260a823dfb6106d3fea04a2b6f27a15e72f521d1e711f167a85e7`）。刷机脚本 `./flash_grokbot_v23.sh`。
+
+---
+
+## v22 变更（历史）
+
+v22 修复三个实机反馈问题，界面样式不变。其中「省电后任意触屏/按键唤醒」的 v22 实现存在上述 ISR 崩溃缺陷，已在 v23 移除并改为仅 PWR 单击。
 
 ## 本版本变更
 
@@ -52,15 +76,15 @@ v22 继承 v21 的角色图集子区域裁剪（252×286 / 360×360，每帧送�
 ```bash
 pip3 install esptool pyserial
 ./tools/flash.sh /dev/cu.usbmodem2101                       # 保留 NVS（推荐）
-./flash_grokbot_v22.sh /dev/cu.usbmodem2101                 # 工作区内专用脚本
-./flash_grokbot_v22.sh /dev/cu.usbmodem2101 AUTO            # 跳过确认
+./flash_grokbot_v23.sh /dev/cu.usbmodem2101                 # 工作区内专用脚本
+./flash_grokbot_v23.sh /dev/cu.usbmodem2101 AUTO            # 跳过确认
 ```
 
-整片镜像 `grokbot_waveshare_amoled216_v22.bin`（SHA256 `8ebb1200d013dc770c020909049fcc4c2745df1b5711728d5e9ac0c8e5259125`）可直烧 0x0（会清 NVS，适合全新板子）。
+整片镜像 `grokbot_waveshare_amoled216_v23.bin`（SHA256 `af177357d96260a823dfb6106d3fea04a2b6f27a15e72f521d1e711f167a85e7`）可直烧 0x0（会清 NVS，适合全新板子）。
 
 ## 回滚
 
-`./flash_grokbot_v21.sh`（工作区内，保留 NVS）。`releases/` 保留 v6–v22（跳过未发布的 v19）全部镜像与分分区组件。
+`./flash_grokbot_v22.sh`（工作区内，保留 NVS）。`releases/` 保留 v6–v23（跳过未发布的 v19）全部镜像与分分区组件。
 
 ## 历史
 

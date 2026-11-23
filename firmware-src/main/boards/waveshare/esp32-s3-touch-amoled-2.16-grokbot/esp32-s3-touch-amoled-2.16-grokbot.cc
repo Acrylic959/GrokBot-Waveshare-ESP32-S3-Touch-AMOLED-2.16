@@ -237,25 +237,19 @@ private:
         power_save_timer_->SetEnabled(battery_discharging_ && !screen_locked_.load());
     }
 
-    // Any user activity (touch or a physical button) should undim the screen
-    // after the idle power-save timer lowered the brightness.  WakeUp() is
-    // cheap when already awake (it only resets the idle countdown) and calls
-    // OnExitSleepMode -> RestoreBrightness only when actually dimmed.
+    // Only a single click of the PWR / SYS_OUT button (GPIO16) undims the
+    // screen after the idle timer lowered the brightness. Touch and the other
+    // buttons deliberately do NOT wake from power-save: hooking the touch ISR
+    // crashed the device (it reached display-lock/LVGL/NVS work from a GPIO
+    // interrupt), and LVGL's touch callback occupies the single ISR slot.
+    // WakeUp() is cheap when already awake (it only resets the idle countdown)
+    // and calls OnExitSleepMode -> RestoreBrightness only when actually dimmed.
     void WakeFromPowerSave() {
         if (screen_locked_.load()) {
             return;  // a locked screen stays dark until BOOT long-press unlocks
         }
         if (power_save_timer_ != nullptr) {
             power_save_timer_->WakeUp();
-        }
-    }
-
-    // Touch interrupt callback (runs in the LVGL/touch task context). A static
-    // instance pointer is safe here: DECLARE_BOARD creates exactly one board.
-    static WaveshareEsp32s3TouchAMOLED216GrokBot* s_instance_;
-    static void TouchWakeupCb(esp_lcd_touch_handle_t /*tp*/) {
-        if (s_instance_ != nullptr) {
-            s_instance_->WakeFromPowerSave();
         }
     }
 
@@ -553,7 +547,6 @@ private:
             if (screen_locked_.load()) {
                 return;
             }
-            WakeFromPowerSave();
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 EnterWifiConfigMode();
@@ -575,7 +568,6 @@ private:
         // press enter/leave the pet page and keeps the state after release.
         key3_button_.OnPressDown([this]() {
             if (screen_locked_.load()) return;
-            WakeFromPowerSave();
             if (esp_timer_get_time() - boot_ready_us_ < 1000000LL) {
                 ESP_LOGW(TAG, "Key3 press ignored (boot guard)");
                 return;
@@ -690,9 +682,6 @@ private:
         } else {
             ESP_LOGI(TAG, "Touch panel initialized successfully");
         }
-        // Undim the display on any physical touch, even on the home screen
-        // (which otherwise ignores touch and would never run an LVGL callback).
-        esp_lcd_touch_register_interrupt_callback(tp, TouchWakeupCb);
     }
 
     // 初始化工具
@@ -714,7 +703,6 @@ public:
                        SCREEN_LOCK_LONG_PRESS_MS),
           sys_out_button_(SYS_OUT_BUTTON_GPIO, DetectButtonActiveHigh(SYS_OUT_BUTTON_GPIO),
                           SCREEN_LOCK_LONG_PRESS_MS) {
-        s_instance_ = this;
         InitializePowerSaveTimer();
         InitializeCodecI2c();
 #if CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_1_75
@@ -808,8 +796,5 @@ public:
         WifiBoard::SetPowerSaveLevel(level);
     }
 };
-
-WaveshareEsp32s3TouchAMOLED216GrokBot*
-    WaveshareEsp32s3TouchAMOLED216GrokBot::s_instance_ = nullptr;
 
 DECLARE_BOARD(WaveshareEsp32s3TouchAMOLED216GrokBot);
