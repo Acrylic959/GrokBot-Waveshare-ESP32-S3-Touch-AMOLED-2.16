@@ -82,7 +82,7 @@ pip3 install esptool pyserial
 ./flash_grokbot_v20.sh /dev/cu.usbmodem2101 AUTO            # 跳过确认
 ```
 
-整片镜像 `grokbot_waveshare_amoled216_v20.bin`（SHA256 `9974090f39a4a467e51a68f2140ae1739b1ad8f17ec47f4168c0934c404168c9`）可直烧 0x0（会清 NVS，适合全新板子）。
+整片镜像 `grokbot_waveshare_amoled216_v20.bin`（SHA256 `9d51ac547fe4e3c921976361f30cab09cc32bc9a7ffad342eeee6c0d07ba2709`）可直烧 0x0（会清 NVS，适合全新板子）。
 
 ## 回滚
 
