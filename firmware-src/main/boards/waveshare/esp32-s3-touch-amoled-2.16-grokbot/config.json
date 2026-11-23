@@ -1,0 +1,21 @@
+{
+    "manufacturer": "waveshare",
+    "type": "esp32-s3-touch-amoled-2.16-grokbot",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "esp32-s3-touch-amoled-2.16-grokbot",
+            "sdkconfig_append": [
+                "CONFIG_USE_WECHAT_MESSAGE_STYLE=n",
+                "CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT=y",
+                "CONFIG_SPIRAM=y",
+                "CONFIG_SPIRAM_MODE_OCT=y",
+                "CONFIG_SPIRAM_SPEED_80M=y",
+                "CONFIG_FREERTOS_HZ=1000",
+                "CONFIG_COMPILER_OPTIMIZATION_PERF=y",
+                "CONFIG_I2S_ISR_IRAM_SAFE=y",
+                "CONFIG_I2S_CTRL_FUNC_IN_IRAM=y"
+            ]
+        }
+    ]
+}

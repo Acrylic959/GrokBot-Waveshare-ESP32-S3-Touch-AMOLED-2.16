@@ -1,0 +1,19 @@
+# Build artifacts (firmware-src)
+firmware-src/build/
+firmware-src/managed_components/
+firmware-src/sdkconfig
+firmware-src/sdkconfig.old
+firmware-src/build.log
+firmware-src/dependencies.lock
+
+# Local logs / private backups
+logs/
+releases/factory_full_16mb.bin
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+__pycache__/
+*.pyc
