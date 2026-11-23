@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键刷机 · GrokBot for Waveshare ESP32-S3-Touch-AMOLED-2.16 (v14)
+# 一键刷机 · GrokBot for Waveshare ESP32-S3-Touch-AMOLED-2.16 (v15)
 #
 # 从 releases/parts/ 读取当前版本的分区镜像（随发布更新）。
 # 保留 NVS：只重写 bootloader / 分区表 / app / assets，跳过 0x9000 的 NVS，
@@ -16,7 +16,7 @@ PARTS="$ROOT/releases/parts"
 PORT="${1:-/dev/cu.usbmodem2101}"
 
 echo "设备   : Waveshare ESP32-S3-Touch-AMOLED-2.16"
-echo "固件   : GrokBot v14（releases/parts/ 当前版本）"
+echo "固件   : GrokBot v15（releases/parts/ 当前版本）"
 echo "串口   : $PORT"
 echo "NVS    : 保留（不清 Wi-Fi 凭据 / 设备绑定）"
 echo

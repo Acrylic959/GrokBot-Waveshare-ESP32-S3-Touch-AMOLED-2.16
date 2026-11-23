@@ -44,7 +44,9 @@ private:
     void UpdatePetPanelFade();
     void RefreshPetPanelLocked();
     void OnPetAction(int action);
+    void NotePetInteraction();
     static void PetButtonEventCb(lv_event_t* event);
+    static void PetPanelEventCb(lv_event_t* event);
     static void RounderEventCb(lv_event_t* event);
     static void AnimationTaskEntry(void* arg);
     static void TeIsr(void* arg);
@@ -105,7 +107,8 @@ private:
     lv_obj_t* pet_feedback_ = nullptr;
     // Four edge bars: mood(top), health(right), satiety(bottom), clean(left).
     lv_obj_t* pet_bars_[4] = {};
-    lv_obj_t* pet_buttons_[6] = {};
+    // Only 4 on-screen buttons: feed / play / clean / explore.
+    lv_obj_t* pet_buttons_[4] = {};
     bool pet_saved_status_visible_ = true;
     bool pet_saved_top_visible_ = true;
     bool pet_saved_bottom_visible_ = true;
@@ -114,6 +117,7 @@ private:
     std::atomic<int> pet_panel_opa_{0};
     std::atomic<int64_t> pet_feedback_until_us_{0};
     std::atomic<bool> pet_ui_refresh_pending_{false};
+    std::atomic<int64_t> pet_last_interaction_us_{0};
 
     int64_t decode_us_total_ = 0;
     int64_t present_us_total_ = 0;
