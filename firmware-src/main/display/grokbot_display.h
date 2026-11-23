@@ -103,7 +103,8 @@ private:
     lv_obj_t* pet_panel_ = nullptr;
     lv_obj_t* pet_title_ = nullptr;
     lv_obj_t* pet_feedback_ = nullptr;
-    lv_obj_t* pet_bars_[6] = {};
+    // Four edge bars: mood(top), health(right), satiety(bottom), clean(left).
+    lv_obj_t* pet_bars_[4] = {};
     lv_obj_t* pet_buttons_[6] = {};
     bool pet_saved_status_visible_ = true;
     bool pet_saved_top_visible_ = true;

@@ -206,6 +206,31 @@ private:
     TaskHandle_t pet_task_handle_ = nullptr;
     int64_t boot_ready_us_ = 0;  // ignore auxiliary-key long press during boot
 
+    // Key3 / SYS_OUT are not necessarily wired active-low. Sample the idle
+    // level with the internal pull-up enabled and derive the active level;
+    // otherwise a wrong active_level makes a physical click look like a
+    // release+press pair (the "double-click and hold" symptom).
+    static bool DetectButtonActiveHigh(gpio_num_t gpio) {
+        gpio_config_t cfg = {};
+        cfg.pin_bit_mask = 1ULL << static_cast<int>(gpio);
+        cfg.mode = GPIO_MODE_INPUT;
+        cfg.pull_up_en = GPIO_PULLUP_ENABLE;
+        cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        cfg.intr_type = GPIO_INTR_DISABLE;
+        if (gpio_config(&cfg) != ESP_OK) {
+            ESP_LOGW(TAG, "GPIO%d level detect failed, assume active-low", (int)gpio);
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+        const int idle = gpio_get_level(gpio);
+        // Idle LOW => pressing drives HIGH (active-high).
+        // Idle HIGH (pulled up) => pressing drives LOW (active-low).
+        const bool active_high = (idle == 0);
+        ESP_LOGI(TAG, "Button GPIO%d idle=%d -> active-%s", (int)gpio, idle,
+                 active_high ? "high" : "low");
+        return active_high;
+    }
+
     void UpdatePowerSaveTimer() {
         // Discharging enables the idle timer; a locked screen must suspend it so
         // it cannot raise the brightness or power the board off while locked.
@@ -415,8 +440,12 @@ private:
         }
     }
 
-    // BOOT triple-click toggles mute. Volume 0 is persisted by AudioCodec to
-    // NVS, so mute survives reboot; remember the pre-mute level to restore it.
+    // BOOT triple-click / SYS_OUT click toggles mute.
+    // IMPORTANT: call the ONE-argument virtual overload. The two-argument
+    // overload only updates AudioCodec::output_volume_ and NVS; BoxAudioCodec
+    // overrides the one-argument overload to actually program the ES8311.
+    // Using (0, false) previously made the UI say "Muted" while sound kept
+    // playing at the hardware level.
     void ToggleMute() {
         if (screen_locked_.load()) {
             return;
@@ -433,14 +462,14 @@ private:
             const int restored = volume_before_mute_ > 0 ? volume_before_mute_ : 70;
             codec->SetOutputVolume(restored);
             volume_before_mute_ = -1;
-            ESP_LOGI(TAG, "Unmuted, volume restored to %d", restored);
+            ESP_LOGI(TAG, "Unmuted, hardware volume restored to %d", restored);
             GetDisplay()->ShowNotification("Volume On");
         } else {
             volume_before_mute_ = current;
-            // Mute is session-only: do not persist 0 to NVS, otherwise a reboot
-            // restores a near-silent volume of 10 instead of the real setting.
-            codec->SetOutputVolume(0, false);
-            ESP_LOGI(TAG, "Muted (saved volume %d)", current);
+            // This reaches BoxAudioCodec::SetOutputVolume() -> hardware + NVS.
+            // AudioCodec::Start() converts a persisted 0 back to 70 on reboot.
+            codec->SetOutputVolume(0);
+            ESP_LOGI(TAG, "Muted (hardware volume 0, saved volume %d)", current);
             GetDisplay()->ShowNotification("Muted");
         }
     }
@@ -494,18 +523,17 @@ private:
         boot_button_.OnMultipleClick([this]() { ToggleMute(); }, 3);
 
         // Key3 (GPIO18, schematic CHIP_PU): dedicated pet mode toggle.
-        // Single press enters/leaves the pet page from BOTH views.
-        key3_button_.OnClick([this]() {
+        // Toggle on the physical PRESS edge instead of CLICK/LONG_PRESS.
+        // Combined with runtime active-level detection this makes ONE normal
+        // press enter/leave the pet page and keeps the state after release.
+        key3_button_.OnPressDown([this]() {
             if (screen_locked_.load()) return;
+            if (esp_timer_get_time() - boot_ready_us_ < 1000000LL) {
+                ESP_LOGW(TAG, "Key3 press ignored (boot guard)");
+                return;
+            }
             ESP_LOGI(TAG, "Key3 press -> pet mode toggle");
             display_->TogglePetMode();
-        });
-        key3_button_.OnLongPress([this]() {
-            // Long press Key3 exits pet mode directly (handy if touch is busy).
-            if (screen_locked_.load()) return;
-            if (display_->IsPetModeActive()) {
-                display_->SetPetMode(false);
-            }
         });
 
         // SYS_OUT (GPIO16): pet-mode quick actions; on home it is a mute shortcut.
@@ -630,8 +658,10 @@ private:
 public:
     WaveshareEsp32s3TouchAMOLED216GrokBot()
         : boot_button_(BOOT_BUTTON_GPIO, false, SCREEN_LOCK_LONG_PRESS_MS),
-          key3_button_(KEY3_BUTTON_GPIO, true, SCREEN_LOCK_LONG_PRESS_MS),
-          sys_out_button_(SYS_OUT_BUTTON_GPIO, true, SCREEN_LOCK_LONG_PRESS_MS) {
+          key3_button_(KEY3_BUTTON_GPIO, DetectButtonActiveHigh(KEY3_BUTTON_GPIO),
+                       SCREEN_LOCK_LONG_PRESS_MS),
+          sys_out_button_(SYS_OUT_BUTTON_GPIO, DetectButtonActiveHigh(SYS_OUT_BUTTON_GPIO),
+                          SCREEN_LOCK_LONG_PRESS_MS) {
         InitializePowerSaveTimer();
         InitializeCodecI2c();
 #if CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_1_75
