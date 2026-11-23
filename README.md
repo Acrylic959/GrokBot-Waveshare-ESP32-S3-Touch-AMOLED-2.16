@@ -6,17 +6,18 @@
 
 > 本仓库是**移植与增强项目**，不是上述任一上游项目的官方仓库。所有原始代码的版权归各自作者所有，详见 [引用与致谢](#引用与致谢) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-> 想要一个直接可刷的固件镜像？去 [Releases](../../releases/tag/v10) 下载 `grokbot_waveshare_amoled216_v10.bin`，或按下方「刷机」步骤用分分区镜像保留 Wi-Fi 配网。
+> 想要一个直接可刷的固件镜像？去 [Releases](../../releases/tag/v11) 下载 `grokbot_waveshare_amoled216_v11.bin`，或按下方「刷机」步骤用分分区镜像保留 Wi-Fi 配网。
 
 ## 功能
 
 - **基于官方 v2.6.0 基线**（v8 起）：整体合入上游 78/xiaozhi-esp32 v2.6.0 的协议层 / MCP / OTA / 网络管理最新代码，并适配其破坏性 API 变更。
 - **AFE 唤醒词**（v10 起恢复）：使用官方 WakeNet `wn9_hiesp` 模型（v9 的 Multinet 自定义词已按反馈移除）。
-- **电子宠物**（v9 起，v10 改触屏互动）：心情 / 饱腹 / 活力三维状态，随时间衰减并持久化到 NVS（离线期间补偿衰减）。状态自动驱动 GrokBot 表情（开心 / 困倦 / 饥饿 / 难过 / 待机）。**触屏三分区互动**：上方=玩耍、中部=抚摸、下方=投喂。
-- **旋转直接切换，无动画**（v10 起）：IMU 检测到的方向变化直接切换 MADCTL，不再有黑幕 / 翻页 / 淡入淡出过渡（v7 的淡入淡出与 v9 的物理翻页均已移除）。
+- **完整养成电子宠物**（v11，参考 DigiCat / TamaPetchi / 小鲸）：**六维数值**（心情 / 饱腹 / 活力 / 健康 / 清洁 / 乐趣）+ 等级与经验 + **成长阶段**（宝宝→幼体→成体）+ **睡眠系统**（闲置 5 分钟自动入睡、精力耗尽自动打盹、醒来恢复）+ **探险随机事件** + **抚摸防刷分** + **待机小动作**（伸懒腰 / 东张西望 / 哼歌）+ **7 项成就**。宠物永不死亡，长期无照顾会自动复活到可玩基线。状态自动驱动 GrokBot 表情，NVS 持久化 + 离线衰减。
+- **触屏互动**（v11 修复）：v10 的 LVGL 事件方案因事件不冒泡、被角色图片吞掉而失效；v11 改为独立任务轮询输入设备，彻底修复。触屏五分区 + 双击探险 + 长按看状态页。
+- **旋转直接切换，无动画**（v10 起）：IMU 检测到的方向变化直接切换 MADCTL，不再有黑幕 / 翻页 / 淡入淡出过渡。
 - **GrokBot 动画显示**：28 状态 / 360×360 图集，随小智状态（idle / listening / speaking / notifying …）切换表情；v7 起 30 FPS 满帧播放。
 - **四向自动旋转**：板载 QMI8658 六轴 IMU，重力方向判定，状态栏 / 字幕 / 动画整体正立。
-- **BOOT 按键操作**（精简）：单击对话/配网、**三击静音**、长按 2 秒锁屏。宠物互动已全部移到触屏，不再占用 BOOT 组合键。静音为会话级（不写入 NVS）。
+- **BOOT 按键**：单击对话/配网、双击投喂、三击静音、长按 2 秒锁屏。触屏提供全部宠物玩法，BOOT 只留最常用的投喂快捷键。静音为会话级（不写入 NVS）。
 - **音频流畅度优化**：I2S ISR/控制函数入 IRAM、DMA 缓冲加深、播放队列 480ms、解码/输出任务独立核绑定、Wi-Fi 省电动态关闭。
 - **DNS 固化根治音频断续**（v8）：联网后固定公共 DNS（223.5.5.5 / 119.29.29.29 / 8.8.8.8）并在 DHCP 完成后重设，解决 `api.tenclass.net` 解析失败导致的 TTS/MQTT 断流。
 - **自动配网保留**：刷机不清除 NVS，已配网设备开机自动重连，无需重新配网；宠物状态也保存在同一 NVS 中。
@@ -57,25 +58,31 @@ pip3 install esptool pyserial
 
 ### 2. 与电子宠物互动
 
-**触屏三分区**（v10 起，屏幕按纵向均分三段）：
+**触屏五分区**（v11，屏幕纵向均分五段，按逻辑坐标判定，旋转后依然正确）：
 
 | 触摸区域 | 效果 |
 | --- | --- |
-| 上方 1/3 | 玩耍（活力 +、心情 +） |
-| 中部 1/3 | 抚摸（心情 +） |
-| 下方 1/3 | 投喂（饱腹 +） |
+| 顶部 0–20% | 玩耍（心情 +20、乐趣 +25，消耗活力/饱腹） |
+| 20–40% | 抚摸（心情 +4，连续摸 3 次进入防刷分冷却） |
+| 40–60% | 清洁（清洁 +30、心情 +6） |
+| 60–80% | 投喂（饱腹 +25、心情 +8） |
+| 底部 80–100% | 睡觉 / 唤醒（切换睡眠状态） |
 
-每次互动都会在屏幕提示当前三维状态。分区按逻辑坐标判定，旋转后依然对应正确的屏幕区域。
+| 手势 | 效果 |
+| --- | --- |
+| 双击屏幕任意处 | 探险：随机事件（找到食物 / 新玩具 / 泥坑 / 交朋友等） |
+| 长按屏幕 1.2 秒 | 查看状态页：阶段、等级、互动次数、六维数值、成就进度 |
 
-**BOOT 按键**（已精简，只保留三个动作）：
+**BOOT 按键**：
 
 | 操作 | 效果 |
 | --- | --- |
 | 单击 | 对话 / 配网 |
+| 双击 | 投喂（触屏之外的快捷方式） |
 | 三击 | 静音 / 恢复（会话级，不写 NVS） |
-| 长按 2 秒 | 锁屏 / 解锁（锁屏时触屏互动也会禁用） |
+| 长按 2 秒 | 锁屏 / 解锁（锁屏时触屏互动也禁用） |
 
-心情 / 饱腹 / 活力初始均为 70，饱腹每分钟 -2、活力 -1、心情 -1；状态低于阈值时宠物会自动切换到对应表情（饥饿→`searching`、困倦→`drowsy`、难过→`sad`）。数据持久化在 NVS，关机再开机不会丢失。
+**养成规则**：六维数值（心情 / 饱腹 / 活力 / 健康 / 清洁 / 乐趣）每分钟衰减；健康仅在某项告急时下降、各项良好时回升。每 10 次互动升 1 级；累计 30 分钟通电或 30 次互动进入成体。闲置 5 分钟或活力耗尽会自动入睡并快速恢复精力；所有需求满足且闲置 90 秒后，会随机做伸懒腰 / 东张西望 / 哼歌的小动作。7 项成就（首次投喂/玩耍/清洁、探险家、Lv.5、成体、50 次互动）通过互动解锁。数据持久化在 NVS，离线期间补偿衰减，长期无照顾会复活到可玩基线（宠物永不死亡）。
 
 ### 3. 从源码构建
 
@@ -109,7 +116,8 @@ idf.py build
 ├── firmware-src/                # 小智固件源码（基于官方 v2.6.0 + 全部 GrokBot 定制）
 │   └── main/boards/waveshare/esp32-s3-touch-amoled-2.16-grokbot/   # 本移植的板型代码
 ├── releases/                    # 预编译固件
-│   ├── grokbot_waveshare_amoled216_v10.bin  # v10 整片合并镜像（推荐）
+│   ├── grokbot_waveshare_amoled216_v11.bin  # v11 整片合并镜像（推荐）
+│   ├── grokbot_waveshare_amoled216_v10.bin  # v10 镜像（回滚用）
 │   ├── grokbot_waveshare_amoled216_v9.bin   # v9 镜像（回滚用）
 │   ├── grokbot_waveshare_amoled216_v8.bin   # v8 镜像（回滚用）
 │   ├── grokbot_waveshare_amoled216_v7.bin   # v7 镜像（回滚用）
@@ -122,7 +130,7 @@ idf.py build
 ├── docs/
 │   ├── port-changes.patch       # 相对上游 fork commit 的移植改动（v1–v7 主体）
 │   ├── BOARD.md                 # 板型说明与版本历史
-│   └── RELEASE_NOTES.md         # v10 发布说明
+│   └── RELEASE_NOTES.md         # v11 发布说明
 ├── .github/workflows/release.yml # 自动还原二进制并发布 Release
 ├── INTRODUCTION.md              # 项目介绍（面向访客）
 ├── THIRD_PARTY_NOTICES.md       # 第三方来源、commit、许可证全文引用
@@ -140,6 +148,10 @@ idf.py build
 | [Stopwatch-GrokBot](https://github.com/Ocean-lhy/Stopwatch-GrokBot) | Ocean-lhy | GrokBot 动画状态机 / 图集来源（commit `9d917f8dcbe48396c74145341a55c8f7b8492081`） | 见其仓库 |
 | [xiaozhi-claude-pixel](https://github.com/xiaomoBoy/xiaozhi-claude-pixel) | xiaomoBoy | 像素小怪表情素材（commit `239d343a9e4c422018a268a5f0e9f535f186d3c9`） | MIT |
 | [Tokenmeter](https://github.com/HerbertGao/Tokenmeter) | HerbertGao | QMI8658 四向旋转映射参考（同板型验证） | 见其仓库 |
+| [DigiCat](https://github.com/aquascape123/digicat) | aquascape123 | 养成玩法设计参考（四维需求 / 睡眠 / 抚摸防刷分 / 永不死亡） | 见其仓库 |
+| [ESP32-TamaPetchi](https://github.com/CyberXcyborg/ESP32-TamaPetchi) | CyberXcyborg | 养成玩法设计参考（状态追踪 / 成就 / 多阶段心情） | 见其仓库 |
+| [ESP32-C6 Desk Pet](https://github.com/thefreelight/esp32_pet/) | thefreelight | 玩法设计参考（探索事件 / 小游戏 / 多种宠物） | 见其仓库 |
+| [小鲸 · DeepSeek 鲸鱼娘宠物](https://github.com/jiashuxue/ai-passport-whale-pet) | jiashuxue | 同固件生态养成参考（自动入睡 / 待机小动作 / 三种抚摸反应 / 状态页） | MIT |
 | [ESP-IDF](https://github.com/espressif/esp-idf) | Espressif Systems | 构建框架（v6.1.1） | Apache-2.0 |
 | [LVGL](https://github.com/lvgl/lvgl) | LVGL K.K. | GUI 框架 | MIT |
 | [esp-wifi-connect](https://github.com/78/esp-wifi-connect) | 78 | Wi-Fi 配网与管理组件 | MIT |

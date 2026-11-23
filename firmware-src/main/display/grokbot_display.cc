@@ -406,9 +406,15 @@ const char* GrokbotDisplay::EffectiveAnimationName() {
         return emotion;
     }
     // Idle with no explicit emotion: let the virtual pet's state choose the
-    // ambient animation (happy / searching / drowsy / sad / idle).
+    // ambient animation (happy / searching / drowsy / sad / sleeping / idle).
     const char* pet_emotion = PetState::GetInstance().SuggestEmotion();
-    return pet_emotion != nullptr ? pet_emotion : "idle";
+    if (pet_emotion != nullptr && strcmp(pet_emotion, "idle") != 0) {
+        return pet_emotion;
+    }
+    // All needs met and left alone for a while: occasional idle antics
+    // (stretch / look around / hum) bring the pet to life.
+    const char* antic = PetState::GetInstance().IdleAntic();
+    return antic != nullptr ? antic : "idle";
 }
 
 bool GrokbotDisplay::EnsurePlayer() {

@@ -14,8 +14,11 @@
 #include "i2c_device.h"
 
 #include <atomic>
+#include <algorithm>
+#include <string>
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <esp_lcd_panel_vendor.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
@@ -199,6 +202,7 @@ private:
     Motion::AccelSample last_accel_;
     int volume_before_mute_ = -1;  // -1 = not muted; otherwise restored volume
     TaskHandle_t pet_task_handle_ = nullptr;
+    TaskHandle_t pet_touch_task_handle_ = nullptr;
 
     void UpdatePowerSaveTimer() {
         // Discharging enables the idle timer; a locked screen must suspend it so
@@ -218,7 +222,7 @@ private:
             GetBacklight()->RestoreBrightness(); });
         power_save_timer_->OnShutdownRequest([this](){
             if (screen_locked_.load()) return;
-            pmic_->PowerOff(); });
+            if (pmic_ != nullptr) pmic_->PowerOff(); });
         UpdatePowerSaveTimer();
     }
 
@@ -246,6 +250,26 @@ private:
 
     void InitializeAxp2101() {
         ESP_LOGI(TAG, "Init AXP2101");
+        // After a warm USB flash the PMU can be left mid-transaction and NACK
+        // its first read, which otherwise trips ESP_ERROR_CHECK in Axp2101's
+        // constructor and reboots forever. Probe the address with retries and
+        // reset the bus before handing it to the driver.
+        bool pmu_ready = false;
+        for (int attempt = 0; attempt < 5 && !pmu_ready; ++attempt) {
+            // Probe: a zero-length write returns ESP_OK only on ACK.
+            if (i2c_master_probe(i2c_bus_, 0x34, 100) == ESP_OK) {
+                pmu_ready = true;
+            } else {
+                ESP_LOGW(TAG, "AXP2101 not ACK (attempt %d), resetting I2C bus", attempt + 1);
+                i2c_master_bus_reset(i2c_bus_);
+                vTaskDelay(pdMS_TO_TICKS(50 * (attempt + 1)));
+            }
+        }
+        if (!pmu_ready) {
+            ESP_LOGE(TAG, "AXP2101 still not responding; skip PMU init (power key disabled)");
+            pmic_ = nullptr;
+            return;
+        }
         pmic_ = new Pmic(i2c_bus_, 0x34);
     }
 
@@ -420,63 +444,130 @@ private:
     }
 
     // ---- Electronic pet interactions -------------------------------------
+    void NotifyPet(const char* action, int ms = 2600) {
+        std::string text = std::string(action) + " " + PetState::GetInstance().Describe();
+        GetDisplay()->ShowNotification(text, ms);
+    }
+
     void FeedPet() {
         if (screen_locked_.load()) return;
-        // Feed() records a transient action; SuggestEmotion() shows "happy"
-        // for a few seconds, then falls back to the ambient pet state. Do not
-        // call SetEmotion() here — that persists until the app changes it.
-        PetState::GetInstance().Feed();
-        GetDisplay()->ShowNotification("投喂成功 " + PetState::GetInstance().Describe(), 2500);
+        NotifyPet(PetState::GetInstance().Feed());
     }
 
     void PlayWithPet() {
         if (screen_locked_.load()) return;
-        PetState::GetInstance().Play();
-        GetDisplay()->ShowNotification("一起玩耍 " + PetState::GetInstance().Describe(), 2500);
+        NotifyPet(PetState::GetInstance().Play());
     }
 
     void CaressPet() {
         if (screen_locked_.load()) return;
-        PetState::GetInstance().Pet();
-        GetDisplay()->ShowNotification("抚摸 " + PetState::GetInstance().Describe(), 2000);
+        NotifyPet(PetState::GetInstance().Pet(), 2000);
     }
 
-    // Touch interaction: the screen is split into three horizontal bands.
-    // lv_indev_get_point() returns logical (post-rotation) coordinates, so the
-    // bands stay correct in every orientation.
-    //   top    (0 .. 1/3)  -> play
-    //   middle (1/3 .. 2/3) -> caress / pet
-    //   bottom (2/3 .. 1)  -> feed
-    static void PetTouchEventCb(lv_event_t* e) {
-        auto* self = static_cast<WaveshareEsp32s3TouchAMOLED216GrokBot*>(
-            lv_event_get_user_data(e));
-        if (self == nullptr || self->screen_locked_.load()) {
-            return;
-        }
-        lv_indev_t* indev = lv_event_get_indev(e);
-        if (indev == nullptr) {
-            return;
-        }
-        lv_point_t point;
-        lv_indev_get_point(indev, &point);
-        const int h = LV_VER_RES;
-        if (point.y < h / 3) {
-            self->PlayWithPet();
-        } else if (point.y < h * 2 / 3) {
-            self->CaressPet();
+    void CleanPet() {
+        if (screen_locked_.load()) return;
+        NotifyPet(PetState::GetInstance().Clean());
+    }
+
+    void ExplorePet() {
+        if (screen_locked_.load()) return;
+        NotifyPet(PetState::GetInstance().Explore(), 3200);
+    }
+
+    void ToggleSleep() {
+        if (screen_locked_.load()) return;
+        if (PetState::GetInstance().sleeping()) {
+            NotifyPet(PetState::GetInstance().Wake());
         } else {
-            self->FeedPet();
+            NotifyPet(PetState::GetInstance().Sleep());
+        }
+    }
+
+    void ShowPetStatus() {
+        if (screen_locked_.load()) return;
+        std::string text = std::string("小何 \"") + PetState::GetInstance().Status() + "\"";
+        GetDisplay()->ShowNotification(text, 5000);
+    }
+
+    // Touch polling: LVGL events do NOT bubble to the parent screen, and the
+    // GrokBot image / status widgets sit on top of the screen and swallow
+    // LV_EVENT_CLICKED. Polling the indev state directly bypasses that entirely.
+    // lv_indev_get_point() returns logical (post-rotation) coordinates, so the
+    // bands stay correct in every orientation. Screen is split into 5 zones:
+    //   0-20%   play      20-40%  caress   40-60% clean
+    //   60-80%  feed      80-100% sleep/wake
+    // A double tap (two presses within 350 ms) anywhere triggers explore.
+    void HandlePetTouch(int x, int y) {
+        const int h = LV_VER_RES;
+        const int band = std::min(4, std::max(0, y * 5 / h));
+        switch (band) {
+            case 0: PlayWithPet(); break;
+            case 1: CaressPet(); break;
+            case 2: CleanPet(); break;
+            case 3: FeedPet(); break;
+            default: ToggleSleep(); break;
+        }
+    }
+
+    static void PetTouchTaskEntry(void* arg) {
+        auto* self = static_cast<WaveshareEsp32s3TouchAMOLED216GrokBot*>(arg);
+        self->PetTouchTask();
+        vTaskDelete(nullptr);
+    }
+
+    void PetTouchTask() {
+        bool was_pressed = false;
+        int64_t press_start_us = 0;
+        int64_t last_press_us = 0;
+        bool long_press_fired = false;
+        while (true) {
+            vTaskDelay(pdMS_TO_TICKS(30));
+            if (screen_locked_.load() || touch_indev_ == nullptr) {
+                was_pressed = false;
+                continue;
+            }
+            const bool pressed = lv_indev_get_state(touch_indev_) == LV_INDEV_STATE_PRESSED;
+            const int64_t now = esp_timer_get_time();
+            if (pressed && !was_pressed) {
+                press_start_us = now;
+                long_press_fired = false;
+            } else if (pressed && was_pressed) {
+                // Long press anywhere -> status page (fires once).
+                if (!long_press_fired && now - press_start_us > 1200000LL) {
+                    ShowPetStatus();
+                    long_press_fired = true;
+                }
+            } else if (!pressed && was_pressed) {
+                if (!long_press_fired) {
+                    // Short tap: double tap -> explore, else zone action.
+                    lv_point_t point;
+                    lv_indev_get_point(touch_indev_, &point);
+                    if (now - last_press_us < 350000LL) {
+                        ExplorePet();
+                        last_press_us = 0;
+                    } else {
+                        HandlePetTouch(point.x, point.y);
+                        last_press_us = now;
+                    }
+                    ESP_LOGI(TAG, "Pet touch at (%d,%d)", point.x, point.y);
+                }
+            }
+            was_pressed = pressed;
         }
     }
 
     void InitializePetTouch() {
-        lv_obj_t* screen = lv_screen_active();
-        if (screen == nullptr) {
-            ESP_LOGW(TAG, "Pet touch: no active screen");
+        if (touch_indev_ == nullptr) {
+            ESP_LOGW(TAG, "Pet touch: no touch indev");
             return;
         }
-        lv_obj_add_event_cb(screen, PetTouchEventCb, LV_EVENT_CLICKED, this);
-        ESP_LOGI(TAG, "Pet touch interaction ready (top=play, middle=pet, bottom=feed)");
+        if (xTaskCreate(PetTouchTaskEntry, "pet_touch", 2048, this, 2,
+                        &pet_touch_task_handle_) != pdPASS) {
+            pet_touch_task_handle_ = nullptr;
+            ESP_LOGW(TAG, "Failed to create pet touch task");
+        } else {
+            ESP_LOGI(TAG, "Pet touch ready (play/caress/clean/feed/sleep, double-tap=explore)");
+        }
     }
 
     static void PetTaskEntry(void* arg) {
@@ -488,10 +579,9 @@ private:
     void PetTask() {
         while (true) {
             vTaskDelay(pdMS_TO_TICKS(60000));  // decay check once a minute
-            // GrokbotDisplay::EffectiveAnimationName() queries SuggestEmotion()
-            // every frame while idle, so no explicit SetEmotion() is needed —
-            // the face updates automatically as the pet's stats decay.
             PetState::GetInstance().Tick();
+            // Idle antics + auto-sleep animation are suggested via SuggestEmotion()
+            // / IdleAntic() which GrokbotDisplay queries every frame.
         }
     }
 
@@ -524,7 +614,11 @@ private:
             SetScreenLocked(!screen_locked_.load());
         });
 
-        // Triple-click: mute / unmute. Pet interactions moved to touch screen.
+        // BOOT key: single -> chat, double -> feed, triple -> mute,
+        // long press -> lock.  Note: Button::OnMultipleClick keeps only ONE
+        // callback (later calls overwrite earlier ones), so only a single
+        // multi-click binding is used here. Other pet actions live on touch.
+        boot_button_.OnDoubleClick([this]() { FeedPet(); });
         boot_button_.OnMultipleClick([this]() { ToggleMute(); }, 3);
     }
 
@@ -667,6 +761,12 @@ public:
     }
 
     virtual bool GetBatteryLevel(int &level, bool &charging, bool &discharging) override {
+        if (pmic_ == nullptr) {
+            level = 100;
+            charging = true;
+            discharging = false;
+            return false;
+        }
         charging = pmic_->IsCharging();
         discharging = pmic_->IsDischarging();
         if (discharging != battery_discharging_) {
