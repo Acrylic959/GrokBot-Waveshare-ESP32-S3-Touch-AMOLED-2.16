@@ -8,6 +8,10 @@
 
 > 想要一个直接可刷的固件镜像？去 [Releases](https://github.com/Acrylic959/GrokBot-Waveshare-ESP32-S3-Touch-AMOLED-2.16/releases/tag/v23) 下载 `grokbot_waveshare_amoled216_v23.bin`，或按下方「刷机」步骤用分分区镜像保留 Wi-Fi 配网。
 
+![GrokBot v23 宣传样机图](docs/images/promo/grokbot_v23_promo.png)
+
+*宣传样机图（v23）：深色霓虹风格，中央为带实体按键的开发板样机，屏幕内为真实宠物页 UI。可编辑源文件见 `docs/images/promo/promo_v23.html`。*
+
 ![宠物页 UI 预览](docs/images/pet_ui_v20_rings_preview_v3.png)
 
 *宠物页：四层同心圆角运动环 · 等级徽章 · 彩色数值反馈 · 底部四按钮（角色保持原色）。v23 视觉与此图完全一致。*
@@ -159,7 +163,7 @@ idf.py build
 │   ├── port-changes.patch       # 相对上游 fork commit 的移植改动（v1–v7 主体）
 │   ├── BOARD.md                 # 板型说明与版本历史
 │   ├── RELEASE_NOTES.md         # v23 发布说明
-│   └── images/                  # 宠物页 UI 预览图
+│   └── images/                  # 宠物页 UI 预览图 + promo/ 宣传样机图（v23）
 ├── .github/workflows/release.yml # 自动还原二进制并发布 Release
 ├── INTRODUCTION.md              # 项目介绍（面向访客）
 ├── THIRD_PARTY_NOTICES.md       # 第三方来源、commit、许可证全文引用
