@@ -1,6 +1,6 @@
 # 项目介绍 · GrokBot for Waveshare AMOLED216
 
-> 一块会「看方向、认主人”的 AI 桌面宠物屏幕——把 M5Stack StopWatch 上大火的 GrokBot 动画，搬进微雪 2.16 寸 AMOLED 小智 AI 助手里。
+> 一块会「看方向、认主人」的 AI 桌面宠物屏幕——把 M5Stack StopWatch 上大火的 GrokBot 动画，搬进微雪 2.16 寸 AMOLED 小智 AI 助手里。
 
 ## 这是什么
 
