@@ -30,6 +30,49 @@ index fc6440d..3894bae 100644
      config BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_46
          bool "Waveshare ESP32-S3-Touch-LCD-1.46"
          depends on IDF_TARGET_ESP32S3
+diff --git a/main/application.cc b/main/application.cc
+index e1f0719..fba259e 100644
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -491,18 +491,28 @@ void Application::CheckNewVersion() {
+                 snprintf(error_message, sizeof(error_message), "%s", err.Message());
+             }
+ 
+-            char buffer[320];
+-            int alert_message_length =
+-                snprintf(buffer, sizeof(buffer), Lang::Strings::CHECK_NEW_VERSION_FAILED,
+-                         retry_delay, error_message);
+-            if (alert_message_length < 0 ||
+-                alert_message_length >= static_cast<int>(sizeof(buffer))) {
+-                snprintf(buffer, sizeof(buffer), "%s", err.Message());
++            // Right after connecting, DNS often has not converged yet (the
++            // first getaddrinfo returns EAI_AGAIN). A transient DNS failure used
++            // to raise a full-screen "check version failed" alert on every
++            // retry, so booting with a slow/unstable network flashed several
++            // errors. Keep the first few retries silent (log only) and surface
++            // an alert only once the failure looks persistent.
++            constexpr int kSilentRetries = 3;
++            if (retry_count >= kSilentRetries) {
++                char buffer[320];
++                int alert_message_length =
++                    snprintf(buffer, sizeof(buffer), Lang::Strings::CHECK_NEW_VERSION_FAILED,
++                             retry_delay, error_message);
++                if (alert_message_length < 0 ||
++                    alert_message_length >= static_cast<int>(sizeof(buffer))) {
++                    snprintf(buffer, sizeof(buffer), "%s", err.Message());
++                }
++                Alert(Lang::Strings::ERROR, buffer, "cloud_off", Lang::Sounds::OGG_EXCLAMATION);
+             }
+-            Alert(Lang::Strings::ERROR, buffer, "cloud_off", Lang::Sounds::OGG_EXCLAMATION);
+ 
+-            ESP_LOGW(TAG, "Check new version failed, retry in %d seconds (%d/%d)", retry_delay,
+-                     retry_count, MAX_RETRY);
++            ESP_LOGW(TAG, "Check new version failed (%s), retry in %d seconds (%d/%d)%s",
++                     err.Message(), retry_delay, retry_count, MAX_RETRY,
++                     retry_count < kSilentRetries ? " [silent]" : "");
+             for (int i = 0; i < retry_delay; i++) {
+                 vTaskDelay(pdMS_TO_TICKS(1000));
+                 if (GetDeviceState() == kDeviceStateIdle) {
 diff --git a/main/audio/audio_codec.h b/main/audio/audio_codec.h
 index a267dbb..ca2f5af 100644
 --- a/main/audio/audio_codec.h
@@ -139,24 +182,25 @@ index 952bb5c..d65852a 100644
      ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_));
  
 diff --git a/main/display/grokbot_display.cc b/main/display/grokbot_display.cc
-index 9165823..cd695e9 100644
+index 9165823..92fdac7 100644
 --- a/main/display/grokbot_display.cc
 +++ b/main/display/grokbot_display.cc
-@@ -18,7 +18,13 @@ constexpr const char* kAtlasName = "grokbot.atlas";
+@@ -18,8 +18,14 @@ constexpr const char* kAtlasName = "grokbot.atlas";
  constexpr int kRoundEdgeInset = 56;
  constexpr int kRoundStatusTop = 56;
  constexpr int kRoundChatBottom = 66;
--constexpr int kNormalFps = 30;
-+// Each GrokBot frame inflates a zlib delta, expands 4-bit grayscale to RGB565
-+// and pushes 360x360 pixels over QSPI. At 30 FPS this saturates CPU, PSRAM,
-+// QSPI and GDMA, starving the I2S audio DMA and making the sound stutter.
-+// Keep the idle animation at 20 FPS and drop to 8 FPS whenever the audio
-+// pipeline is active (listening / speaking / notification playback).
-+constexpr int kNormalFps = 20;
-+constexpr int kAudioBusyFps = 8;
- constexpr int kPowerSaveFps = 5;
++// The atlas is authored at 30 FPS. Measured render cost is ~13-19 ms/frame
++// (inflate ~10-13 ms, 4-bit->RGB565 expand ~2 ms, present ~1-5 ms), which fits
++// in the 33 ms budget at 30 FPS. Audio output/opus are pinned to core 1 and the
++// animation task to core 0, so a full-rate animation no longer starves audio.
++// During active audio we still throttle moderately to leave PSRAM/QSPI headroom.
+ constexpr int kNormalFps = 30;
+-constexpr int kPowerSaveFps = 5;
++constexpr int kAudioBusyFps = 15;
++constexpr int kPowerSaveFps = 10;
  constexpr uint32_t kPanelTeHz = 60;
  
+ const char* MapEmotion(const char* emotion) {
 @@ -368,6 +374,11 @@ void GrokbotDisplay::SetPowerSaveMode(bool on) {
      LvglDisplay::SetPowerSaveMode(on);
  }
@@ -201,7 +245,43 @@ index 9165823..cd695e9 100644
          if (!has_selected_ || strcmp(player_.selected_name(), effective) != 0) {
              if (player_.select_name(effective)) {
                  player_.seek(player_.start_frame());
-@@ -719,9 +743,10 @@ void GrokbotDisplay::AnimationTask() {
+@@ -651,8 +675,7 @@ void GrokbotDisplay::AnimationTask() {
+         } else if (!reverse_) {
+             GrokBotPlayer::FrameInfo frame = {};
+             rendered = player_.current_frame(&frame) && DecodeFrame(frame, true) && PresentFrame();
+-            const int count = player_.selected_frame_count();
+-            if (player_.current_index() + 1 >= count) {
++            if (player_.current_index() + 1 >= player_.selected_frame_count()) {
+                 reverse_ = true;
+             } else {
+                 player_.advance();
+@@ -660,18 +683,21 @@ void GrokbotDisplay::AnimationTask() {
+         } else {
+             const int lower = player_.start_frame();
+             if (player_.current_index() <= lower) {
++                // Reached the start of the ping-pong range: switch to forward.
++                // Seek BEFORE decoding so the delta for the new index is applied
++                // to the current packed_ state (XOR accumulation is order-sensitive).
+                 reverse_ = false;
+                 if (player_.current_index() + 1 < player_.selected_frame_count()) {
+                     player_.seek(player_.current_index() + 1);
+                 }
+                 GrokBotPlayer::FrameInfo frame = {};
+-                rendered =
+-                    player_.current_frame(&frame) && DecodeFrame(frame, true) && PresentFrame();
++                rendered = player_.current_frame(&frame) && DecodeFrame(frame, true) && PresentFrame();
+                 player_.advance();
+             } else {
++                // XOR is self-inverse: applying the current frame's delta to the
++                // accumulated state yields the previous frame.
+                 GrokBotPlayer::FrameInfo frame = {};
+-                if (player_.current_frame(&frame) && DecodeFrame(frame, false)) {
+-                    ExpandPackedFrame();
++                if (player_.current_frame(&frame) && DecodeFrame(frame, true)) {
+                     rendered = PresentFrame();
+                     player_.retreat();
+                 }
+@@ -719,9 +745,10 @@ void GrokbotDisplay::AnimationTask() {
              const uint32_t avg_te_wait_us =
                  te_waits > 0 ? static_cast<uint32_t>(te_wait_us_total / te_waits) : 0;
              ESP_LOGI(TAG,
@@ -214,7 +294,7 @@ index 9165823..cd695e9 100644
                       static_cast<unsigned>(avg_present_us), static_cast<unsigned>(avg_te_wait_us),
                       static_cast<unsigned>(
 diff --git a/main/display/grokbot_display.h b/main/display/grokbot_display.h
-index 0243b26..e903545 100644
+index 0243b26..997fc80 100644
 --- a/main/display/grokbot_display.h
 +++ b/main/display/grokbot_display.h
 @@ -26,6 +26,8 @@ public:
@@ -226,12 +306,9 @@ index 0243b26..e903545 100644
  
  private:
      static void RounderEventCb(lv_event_t* event);
-@@ -78,8 +80,9 @@ private:
-     std::atomic<int64_t> notification_until_us_{0};
-     std::atomic<bool> assets_update_in_progress_{false};
+@@ -80,6 +82,7 @@ private:
      std::atomic<bool> atlas_refresh_required_{false};
--    std::atomic<int> target_fps_{30};
-+    std::atomic<int> target_fps_{20};
+     std::atomic<int> target_fps_{30};
      std::atomic<bool> running_{false};
 +    std::atomic<bool> screen_locked_{false};
      int64_t decode_us_total_ = 0;

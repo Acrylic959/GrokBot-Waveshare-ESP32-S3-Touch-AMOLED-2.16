@@ -80,7 +80,7 @@ private:
     std::atomic<int64_t> notification_until_us_{0};
     std::atomic<bool> assets_update_in_progress_{false};
     std::atomic<bool> atlas_refresh_required_{false};
-    std::atomic<int> target_fps_{20};
+    std::atomic<int> target_fps_{30};
     std::atomic<bool> running_{false};
     std::atomic<bool> screen_locked_{false};
     int64_t decode_us_total_ = 0;

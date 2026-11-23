@@ -10,10 +10,10 @@
 
 ## 功能
 
-- **GrokBot 动画显示**：28 状态 / 360×360 图集，随小智状态（idle / listening / speaking / notifying …）切换表情。
-- **四向自动旋转**：板载 QMI8658 六轴 IMU，重力方向判定，状态栏 / 字幕 / 动画整体正立。
-- **BOOT 长按锁屏**：长按 2 秒暂停动画、熄屏、禁用触摸；再长按解锁。
-- **音频流畅度优化**：I2S ISR/控制函数入 IRAM、DMA 缓冲加深、播放队列加深、解码/输出任务独立核绑定、Wi-Fi 省电动态关闭。
+- **GrokBot 动画显示**：28 状态 / 360×360 图集，随小智状态（idle / listening / speaking / notifying …）切换表情；v7 起 30 FPS 满帧播放。
+- **四向自动旋转**：板载 QMI8658 六轴 IMU，重力方向判定，状态栏 / 字幕 / 动画整体正立；v7 起旋转带黑幕淡入淡出的平滑过渡。
+- **BOOT 按键操作**：单击对话/配网、双击 AEC（可选）、**三击静音**、长按 2 秒锁屏。静音音量写入 NVS，重启保留。
+- **音频流畅度优化**：I2S ISR/控制函数入 IRAM、DMA 缓冲加深、播放队列 480ms、解码/输出任务独立核绑定、Wi-Fi 省电动态关闭。
 - **自动配网保留**：刷机不清除 NVS，已配网设备开机自动重连，无需重新配网。
 
 ## 硬件要求
@@ -82,7 +82,8 @@ idf.py build
 ├── firmware-src/                # 小智固件源码（基于 Ocean-lhy/xiaozhi-esp32 dev-grokbot）
 │   └── main/boards/waveshare/esp32-s3-touch-amoled-2.16-grokbot/   # 本移植的板型代码
 ├── releases/                    # 预编译固件
-│   ├── grokbot_waveshare_amoled216_v6.bin   # 整片合并镜像（13MB）
+│   ├── grokbot_waveshare_amoled216_v7.bin   # v7 整片合并镜像（推荐）
+│   ├── grokbot_waveshare_amoled216_v6.bin   # v6 镜像（回滚用）
 │   ├── SHA256SUMS                            # 各版本校验和
 │   └── parts/                                # 分区组件（供保留 NVS 的分分区刷机）
 ├── tools/

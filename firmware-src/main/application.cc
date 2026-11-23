@@ -491,18 +491,28 @@ void Application::CheckNewVersion() {
                 snprintf(error_message, sizeof(error_message), "%s", err.Message());
             }
 
-            char buffer[320];
-            int alert_message_length =
-                snprintf(buffer, sizeof(buffer), Lang::Strings::CHECK_NEW_VERSION_FAILED,
-                         retry_delay, error_message);
-            if (alert_message_length < 0 ||
-                alert_message_length >= static_cast<int>(sizeof(buffer))) {
-                snprintf(buffer, sizeof(buffer), "%s", err.Message());
+            // Right after connecting, DNS often has not converged yet (the
+            // first getaddrinfo returns EAI_AGAIN). A transient DNS failure used
+            // to raise a full-screen "check version failed" alert on every
+            // retry, so booting with a slow/unstable network flashed several
+            // errors. Keep the first few retries silent (log only) and surface
+            // an alert only once the failure looks persistent.
+            constexpr int kSilentRetries = 3;
+            if (retry_count >= kSilentRetries) {
+                char buffer[320];
+                int alert_message_length =
+                    snprintf(buffer, sizeof(buffer), Lang::Strings::CHECK_NEW_VERSION_FAILED,
+                             retry_delay, error_message);
+                if (alert_message_length < 0 ||
+                    alert_message_length >= static_cast<int>(sizeof(buffer))) {
+                    snprintf(buffer, sizeof(buffer), "%s", err.Message());
+                }
+                Alert(Lang::Strings::ERROR, buffer, "cloud_off", Lang::Sounds::OGG_EXCLAMATION);
             }
-            Alert(Lang::Strings::ERROR, buffer, "cloud_off", Lang::Sounds::OGG_EXCLAMATION);
 
-            ESP_LOGW(TAG, "Check new version failed, retry in %d seconds (%d/%d)", retry_delay,
-                     retry_count, MAX_RETRY);
+            ESP_LOGW(TAG, "Check new version failed (%s), retry in %d seconds (%d/%d)%s",
+                     err.Message(), retry_delay, retry_count, MAX_RETRY,
+                     retry_count < kSilentRetries ? " [silent]" : "");
             for (int i = 0; i < retry_delay; i++) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 if (GetDeviceState() == kDeviceStateIdle) {

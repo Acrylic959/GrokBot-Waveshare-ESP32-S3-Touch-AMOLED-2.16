@@ -9,7 +9,7 @@
 | IMU | QMI8658，I2C 0x6B（备选 0x6A），SDA=15 / SCL=14 |
 | PMU | AXP2101，I2C 0x34 |
 | 音频 | ES8311 (DAC) + ES7210 (ADC)，I2S |
-| BOOT 键 | GPIO0，长按 2000ms 锁屏 |
+| BOOT 键 | GPIO0；单击对话/配网、双击 AEC、三击静音、长按 2000ms 锁屏 |
 
 ## 相对上游的改动
 
@@ -26,7 +26,8 @@
 | --- | --- |
 | `main/Kconfig.projbuild` | 注册 `BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT` |
 | `main/CMakeLists.txt` | 板型源码 / 字体 / assets / esp_rom 依赖 |
-| `main/display/grokbot_display.cc/.h` | 帧率节流（20fps，音频活跃 8fps）、锁屏暂停动画、诊断日志 |
+| `main/display/grokbot_display.cc/.h` | v7 帧率 30fps（音频活跃 15fps / 省电 10fps）、锁屏暂停动画、反向播放解码路径精简、诊断日志 |
+| `main/application.cc` | v7 OTA 版本检查前 3 次失败静默（配网 error 降噪） |
 | `main/audio/audio_codec.h` | 本板 I2S ISR IRAM、DMA 8×360（120ms）、中断优先级 3 |
 | `main/audio/codecs/box_audio_codec.cc` | 应用 I2S 中断优先级配置 |
 | `main/audio/audio_service.cc/.h` | 播放队列 2→8、opus 优先级 2→5、audio_output/opus_codec 绑核 core 1 |
@@ -39,7 +40,8 @@
 | v3 | 20fps 节流 + 自动旋转 + 长按锁屏 | `7f8e8dfd` |
 | v4 | 旋转 +90° 校准 + I2S 硬件抗断续 | `8054e653` |
 | v5 | Wi-Fi modem sleep 动态关闭 | `f97f09d0` |
-| **v6** | **旋转方向根治（全部正立）+ 音频播放链路第二轮优化** | **`f462d950`** |
+| v6 | 旋转方向根治（全部正立）+ 音频播放链路第二轮优化 | `f462d950` |
+| **v7** | **30 FPS 帧率提升 + BOOT 三击静音 + 旋转黑幕平滑过渡 + 配网 error 降噪 + 代码精简** | **`09407e58`** |
 
 完整 SHA256 见 `releases/SHA256SUMS`。
 
@@ -55,3 +57,5 @@ QMI8658 重力四象限映射（同板型已验证）：
 |az| > 780mg（平放）→ 不旋转
 轴向幅值 < 450mg → 不旋转（防抖：连续 3 次一致才生效）
 ```
+
+v7 起旋转带平滑过渡：`lv_layer_top()` 上挂全屏黑幕，淡入 130ms → 切换 MADCTL → 淡出 200ms，`rotation_busy_` 标志防止过渡期间重复触发。
