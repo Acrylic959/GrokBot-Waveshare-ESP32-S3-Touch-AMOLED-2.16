@@ -12,6 +12,12 @@ protected:
     bool in_config_mode_ = false;
     NetworkEventCallback network_event_callback_ = nullptr;
 
+#if CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT
+    esp_timer_handle_t static_dns_timer_ = nullptr;
+    static void ApplyStaticDns();
+    static void OnStaticDnsTimer(void* arg);
+#endif
+
     virtual std::string GetBoardJson() override;
 
     /**

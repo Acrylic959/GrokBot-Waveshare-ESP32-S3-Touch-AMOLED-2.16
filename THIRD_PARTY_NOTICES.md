@@ -7,6 +7,8 @@
 ## 1. xiaozhi-esp32（固件主体）
 
 - **仓库**：https://github.com/78/xiaozhi-esp32
+- **v8 基线版本**：`v2.6.0`（commit `4de00aed740595a8713b01f8332b9b2cf30685bc`）——自 v8 起，通用代码（协议层 / MCP / OTA / 设备状态机 / 网络管理 / 显示框架 / 音频服务）整体升级到此版本。
+- **早期版本**：v2–v7 基于 `v2.5.x` 系列（经 Ocean-lhy fork）。
 - **版权**：Copyright (c) 2025 Shenzhen Xinzhi Future Technology Co., Ltd. / Project Contributors
 - **许可证**：MIT License
 - **用途**：小智 AI 助手固件主体（应用、协议、显示框架、音频服务、资源系统等）
@@ -40,15 +42,15 @@ SOFTWARE.
 
 ---
 
-## 2. Ocean-lhy/xiaozhi-esp32 · dev-grokbot 分支（直接代码基线）
+## 2. Ocean-lhy/xiaozhi-esp32 · dev-grokbot 分支（GrokBot 资源来源）
 
 - **仓库**：https://github.com/Ocean-lhy/xiaozhi-esp32
 - **分支**：`dev-grokbot`
-- **精确 commit**：`1e1df1d94bd4a984f899e80b951552f93da5d6ae`
+- **精确 commit**：`1e1df1d94bd4a984f899e80b951552f93da5d6ae`（tag `v2.5.3-dev-grokbot`）
 - **commit 说明**：`feat(m5stack): add StopWatch GrokBot animation display`
 - **许可证**：继承上游 xiaozhi-esp32 的 MIT License
-- **用途**：`firmware-src/` 的直接代码基线；提供 `GrokbotDisplay` / `GrokBotPlayer` 与 `grokbot.atlas` 打包资源。
-- **本项目的修改**：新增微雪板型、旋转/锁屏/音频任务调整，完整 diff 见 `docs/port-changes.patch`。
+- **用途**：提供 `GrokbotDisplay` / `GrokBotPlayer` 与 `grokbot.atlas` 打包资源。v2–v7 曾以其为直接代码基线；v8 起通用代码升级为官方 v2.6.0，但保留本 fork 的 GrokBot 动画实现。
+- **本项目的修改**：新增微雪板型、旋转/锁屏/音频任务调整、DNS 固化；早期 diff 见 `docs/port-changes.patch`。
 
 ---
 

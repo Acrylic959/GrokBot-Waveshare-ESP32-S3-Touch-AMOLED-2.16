@@ -11,6 +11,8 @@
 #include <esp_network.h>
 #include <esp_log.h>
 #include <esp_mac.h>
+#include <esp_netif.h>
+#include <arpa/inet.h>
 #include <utility>
 
 #include <material_symbols.h>
@@ -36,6 +38,16 @@ WifiBoard::WifiBoard() {
         .skip_unhandled_events = true
     };
     esp_timer_create(&timer_args, &connect_timer_);
+#if CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT
+    esp_timer_create_args_t dns_timer_args = {
+        .callback = OnStaticDnsTimer,
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "static_dns_timer",
+        .skip_unhandled_events = true
+    };
+    esp_timer_create(&dns_timer_args, &static_dns_timer_);
+#endif
 }
 
 WifiBoard::~WifiBoard() {
@@ -43,7 +55,50 @@ WifiBoard::~WifiBoard() {
         esp_timer_stop(connect_timer_);
         esp_timer_delete(connect_timer_);
     }
+#if CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT
+    if (static_dns_timer_) {
+        esp_timer_stop(static_dns_timer_);
+        esp_timer_delete(static_dns_timer_);
+    }
+#endif
 }
+
+#if CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT
+void WifiBoard::ApplyStaticDns() {
+    // LWIP DNS is global by default (CONFIG_LWIP_DNS_SETSERVER_WITH_NETIF is
+    // off), so pass the STA netif but rely on the global DNS table. Log the
+    // return codes and read back the effective servers for diagnosis.
+    esp_netif_t* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta == nullptr) {
+        ESP_LOGW(TAG, "Static DNS: STA netif not found");
+        return;
+    }
+    esp_netif_dns_info_t dns = {};
+    dns.ip.type = ESP_IPADDR_TYPE_V4;
+    inet_pton(AF_INET, "223.5.5.5", &dns.ip.u_addr.ip4);
+    esp_err_t main_err = esp_netif_set_dns_info(sta, ESP_NETIF_DNS_MAIN, &dns);
+    inet_pton(AF_INET, "119.29.29.29", &dns.ip.u_addr.ip4);
+    esp_err_t backup_err = esp_netif_set_dns_info(sta, ESP_NETIF_DNS_BACKUP, &dns);
+    inet_pton(AF_INET, "8.8.8.8", &dns.ip.u_addr.ip4);
+    esp_err_t fallback_err = esp_netif_set_dns_info(sta, ESP_NETIF_DNS_FALLBACK, &dns);
+
+    esp_netif_dns_info_t readback = {};
+    esp_err_t rb = esp_netif_get_dns_info(sta, ESP_NETIF_DNS_MAIN, &readback);
+    char buf[16] = "?";
+    if (rb == ESP_OK && readback.ip.type == ESP_IPADDR_TYPE_V4) {
+        esp_ip4addr_ntoa(&readback.ip.u_addr.ip4, buf, sizeof(buf));
+    }
+    ESP_LOGI(TAG, "Static DNS applied main=%s backup=%s fallback=%s, readback=%s (err %d/%d/%d rb=%d)",
+             esp_err_to_name(main_err), esp_err_to_name(backup_err),
+             esp_err_to_name(fallback_err), buf, main_err, backup_err, fallback_err, rb);
+}
+
+void WifiBoard::OnStaticDnsTimer(void* arg) {
+    // Re-apply after the DHCP lease has fully settled (DHCP may hand down its
+    // own DNS options slightly after the Connected callback fires).
+    ApplyStaticDns();
+}
+#endif
 
 std::string WifiBoard::GetBoardType() {
     return "wifi";
@@ -125,6 +180,16 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
 #endif
             in_config_mode_ = false;
             ESP_LOGI(TAG, "Connected to WiFi: %s", data.c_str());
+#if CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT
+            // This board's router-advertised DNS intermittently fails to resolve
+            // api.tenclass.net (getaddrinfo -> EAI_AGAIN), which stalls the cloud
+            // TTS stream and sounds like audio stutter. Pin reliable public
+            // resolvers once DHCP has completed so name lookup always succeeds.
+            ApplyStaticDns();
+            // The DHCP client can hand down its own DNS options slightly after
+            // the Connected callback. Re-apply once the lease is fully settled.
+            esp_timer_start_once(static_dns_timer_, 3 * 1000000ULL);
+#endif
             break;
         case NetworkEvent::Scanning:
             ESP_LOGI(TAG, "WiFi scanning");
@@ -346,6 +411,8 @@ std::string WifiBoard::GetDeviceStatusJson() {
         cJSON_AddNumberToObject(chip, "temperature", temp);
         cJSON_AddItemToObject(root, "chip", chip);
     }
+
+    AddSystemStatus(root);
 
     auto str = cJSON_PrintUnformatted(root);
     std::string result(str);
