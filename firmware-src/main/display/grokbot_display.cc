@@ -359,10 +359,6 @@ constexpr int kPetFadeStep = 26;  // ~10 frames at 30 FPS => ~330 ms fade
 // petting is a tap on the character, sleeping is idle-triggered after 60 s.
 constexpr int kPetButtonActionId[4] = {0, 1, 3, 4};
 constexpr int64_t kPetAutoSleepUs = 60 * 1000000LL;
-// Rounded-rectangle corner arcs (LVGL angles: 0=right, 90=bottom,
-// 180=left, 270=top).  Each corner follows the lower of its two sides.
-constexpr int kPetCornerStart[4] = {180, 270, 0, 90};
-constexpr int kPetCornerPair[4][2] = {{0,3}, {0,1}, {2,1}, {2,3}};  // TL,TR,BR,BL
 }  // namespace
 
 void GrokbotDisplay::PetButtonEventCb(lv_event_t* event) {
@@ -444,10 +440,10 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_obj_set_style_radius(pet_title_, 14, 0);
     lv_obj_set_style_pad_all(pet_title_, 6, 0);
 
-    // ---- Monochrome rounded-rectangle ring --------------------------------
-    // One continuous outline at (24,18) size 432x444, corner radius 28.  The
-    // straight sides are slim bars; the four corners are 90-degree arcs whose
-    // fill follows the lower of the two adjacent stats. No separate dots.
+    // ---- Rounded rectangle made from exactly four bars --------------------
+    // Each bar is 14px thick with 7px end radius. They span the full width /
+    // height and overlap at the corners, so the two semicircular caps meet at
+    // the same centre and form a clean rounded corner. No arcs or dots.
     pet_ring_ = lv_obj_create(pet_panel_);
     lv_obj_set_size(pet_ring_, 432, 444);
     lv_obj_align(pet_ring_, LV_ALIGN_TOP_LEFT, 24, 18);
@@ -458,33 +454,11 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_obj_clear_flag(pet_ring_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(pet_ring_, LV_OBJ_FLAG_CLICKABLE);
 
-    const int arc_xy[4][2] = {{0,0}, {376,0}, {376,388}, {0,388}};
-    for (int i = 0; i < 4; ++i) {
-        lv_obj_t* arc = lv_arc_create(pet_ring_);
-        lv_obj_set_size(arc, 56, 56);
-        lv_obj_align(arc, LV_ALIGN_TOP_LEFT, arc_xy[i][0], arc_xy[i][1]);
-        lv_arc_set_bg_angles(arc, kPetCornerStart[i], kPetCornerStart[i] + 90);
-        lv_arc_set_angles(arc, kPetCornerStart[i],
-                          kPetCornerStart[i] + 90 * 70 / 100);
-        lv_obj_set_style_arc_width(arc, 14, LV_PART_MAIN);
-        lv_obj_set_style_arc_width(arc, 14, LV_PART_INDICATOR);
-        lv_obj_set_style_arc_color(arc, lv_color_hex(0x2a2a2a), LV_PART_MAIN);
-        lv_obj_set_style_arc_color(arc, lv_color_white(), LV_PART_INDICATOR);
-        lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(arc, 0, 0);
-        // Hide the arc knob: this is a pure progress indicator, not an input.
-        lv_obj_set_style_width(arc, 0, LV_PART_KNOB);
-        lv_obj_set_style_height(arc, 0, LV_PART_KNOB);
-        lv_obj_set_style_opa(arc, LV_OPA_TRANSP, LV_PART_KNOB);
-        lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-        pet_corner_arcs_[i] = arc;
-    }
-
-    // Four straight sides, all exactly 14px thick.
-    const int bar_x[4] = {28, 418, 28, 0};
-    const int bar_y[4] = {0, 28, 430, 28};
-    const int bar_w[4] = {376, 14, 376, 14};
-    const int bar_h[4] = {14, 388, 14, 388};
+    // top, right, bottom, left. Full spans overlap 14px at every corner.
+    const int bar_x[4] = {0, 418, 0, 0};
+    const int bar_y[4] = {0, 0, 430, 0};
+    const int bar_w[4] = {432, 14, 432, 14};
+    const int bar_h[4] = {14, 444, 14, 444};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t* bar = lv_bar_create(pet_ring_);
         lv_obj_set_size(bar, bar_w[i], bar_h[i]);
@@ -498,17 +472,16 @@ void GrokbotDisplay::InitializePetPanel() {
         lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(bar, lv_color_white(), LV_PART_INDICATOR);
         lv_obj_set_style_radius(bar, 7, 0);
+        lv_obj_set_style_radius(bar, 7, LV_PART_INDICATOR);
         lv_obj_set_style_pad_all(bar, 0, 0);
         lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE);
 
-        // Name lives inside the bar, centred. Vertical sides stack characters.
+        // Label has no background. Its colour flips between white (dark track)
+        // and black (white fill) in RefreshPetPanelLocked() for contrast.
         lv_obj_t* name = lv_label_create(bar);
         lv_label_set_text(name, (i == 1) ? "健\n康" : (i == 3) ? "清\n洁" : kPetStatLabels[i]);
-        lv_obj_set_style_text_color(name, lv_color_hex(0x0a0a0a), 0);
-        lv_obj_set_style_bg_color(name, lv_color_white(), 0);
-        lv_obj_set_style_bg_opa(name, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(name, 4, 0);
+        lv_obj_set_style_text_color(name, lv_color_white(), 0);
         lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_center(name);
         if (i == 1 || i == 3) {
@@ -520,8 +493,19 @@ void GrokbotDisplay::InitializePetPanel() {
             lv_obj_set_style_pad_top(name, 0, 0);
             lv_obj_set_style_pad_bottom(name, 0, 0);
         }
+        pet_stat_labels_[i] = name;
         pet_bars_[i] = bar;
     }
+
+    // ---- Assistant subtitle sits under the level badge, clear of the face --
+    pet_subtitle_ = lv_label_create(pet_panel_);
+    lv_obj_set_width(pet_subtitle_, 360);
+    lv_obj_set_style_text_color(pet_subtitle_, lv_color_white(), 0);
+    lv_obj_set_style_text_align(pet_subtitle_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(pet_subtitle_, LV_LABEL_LONG_WRAP);
+    lv_obj_align(pet_subtitle_, LV_ALIGN_TOP_MID, 0, 88);
+    lv_label_set_text(pet_subtitle_, "");
+    lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
 
     pet_feedback_ = lv_label_create(pet_panel_);
     lv_obj_set_width(pet_feedback_, 280);
@@ -552,7 +536,7 @@ void GrokbotDisplay::InitializePetPanel() {
         pet_buttons_[i] = button;
     }
 
-    ESP_LOGI(TAG, "Pet panel ready (monochrome rounded ring, 4 buttons, tap-to-pet, auto-sleep)");
+    ESP_LOGI(TAG, "Pet panel ready (4 rounded bars form ring, contrast labels, subtitle under level)");
 }
 
 void GrokbotDisplay::UpdatePetPanelFade() {
@@ -599,17 +583,13 @@ void GrokbotDisplay::RefreshPetPanelLocked() {
         if (pet_bars_[i] != nullptr) {
             lv_bar_set_value(pet_bars_[i], shown[i], LV_ANIM_OFF);
         }
-    }
-    // Corner arcs follow the lower of the two adjacent sides so the ring
-    // remains visually continuous instead of using separate corner dots.
-    for (int i = 0; i < 4; ++i) {
-        if (pet_corner_arcs_[i] == nullptr) {
-            continue;
+        // No label background: the glyphs take the inverse colour of the
+        // bar area they sit on (white over the dark track, black over fill).
+        if (pet_stat_labels_[i] != nullptr) {
+            lv_obj_set_style_text_color(
+                pet_stat_labels_[i],
+                shown[i] >= 50 ? lv_color_black() : lv_color_white(), 0);
         }
-        const int frac = std::min(shown[kPetCornerPair[i][0]],
-                                  shown[kPetCornerPair[i][1]]);
-        lv_arc_set_angles(pet_corner_arcs_[i], kPetCornerStart[i],
-                          kPetCornerStart[i] + 90 * frac / 100);
     }
     if (pet_title_ != nullptr) {
         char buffer[64];
@@ -688,6 +668,14 @@ void GrokbotDisplay::SetPetMode(bool active) {
             lv_obj_remove_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_set_style_opa(pet_panel_, LV_OPA_TRANSP, 0);
         }
+        if (pet_subtitle_ != nullptr) {
+            const char* text = lv_label_get_text(pet_subtitle_);
+            if (text != nullptr && text[0] != '\0') {
+                lv_obj_remove_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
         pet_fade_in_.store(true);
         pet_feedback_until_us_.store(0);
         // Entering the pet page is an explicit "I want to play" signal. Wake a
@@ -706,6 +694,9 @@ void GrokbotDisplay::SetPetMode(bool active) {
         pet_last_interaction_us_.store(0);
         if (pet_feedback_ != nullptr) {
             lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (pet_subtitle_ != nullptr) {
+            lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
         }
         if (status_bar_ != nullptr && pet_saved_status_visible_) {
             lv_obj_remove_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
@@ -754,6 +745,47 @@ void GrokbotDisplay::SetStatus(const char* status) {
     }
     assets_update_in_progress_.store(loading_assets);
     LvglDisplay::SetStatus(status);
+}
+
+void GrokbotDisplay::SetChatMessage(const char* role, const char* content) {
+    LcdDisplay::SetChatMessage(role, content);
+    DisplayLockGuard lock(this);
+    if (!lock || pet_subtitle_ == nullptr) {
+        return;
+    }
+    lv_label_set_text(pet_subtitle_, content != nullptr ? content : "");
+    const bool visible = pet_mode_active_.load() && content != nullptr && content[0] != '\0';
+    if (visible) {
+        lv_obj_remove_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+        // Keep the classic bottom subtitle bar out of the pet screen.
+        if (bottom_bar_ != nullptr) {
+            lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+    } else {
+        lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void GrokbotDisplay::RemoveChatMessage(const char* role, const char* content) {
+    LcdDisplay::RemoveChatMessage(role, content);
+    DisplayLockGuard lock(this);
+    if (!lock || pet_subtitle_ == nullptr || content == nullptr) {
+        return;
+    }
+    if (strcmp(lv_label_get_text(pet_subtitle_), content) == 0) {
+        lv_label_set_text(pet_subtitle_, "");
+        lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void GrokbotDisplay::ClearChatMessages() {
+    LcdDisplay::ClearChatMessages();
+    DisplayLockGuard lock(this);
+    if (!lock || pet_subtitle_ == nullptr) {
+        return;
+    }
+    lv_label_set_text(pet_subtitle_, "");
+    lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void GrokbotDisplay::ShowNotification(const char* notification, int duration_ms) {
