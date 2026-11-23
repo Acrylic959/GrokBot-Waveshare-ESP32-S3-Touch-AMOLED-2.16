@@ -6,7 +6,7 @@
 
 > 本仓库是**移植与增强项目**，不是上述任一上游项目的官方仓库。所有原始代码的版权归各自作者所有，详见 [引用与致谢](#引用与致谢) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-> **关于二进制文件**：GitHub 内容接口只接受 UTF-8 文本，因此仓库中的 `.bin` / `.atlas` / `.ogg` 等二进制文件以 base64 文本块存放在 `encoded-assets/`。刷机或编译前先运行 `python3 tools/reconstruct-assets.py` 还原原始文件；也可以直接从 [Releases](releases/tag/v6) 下载还原后的固件镜像。
+> 想要一个直接可刷的固件镜像？去 [Releases](../../releases/tag/v6) 下载 `grokbot_waveshare_amoled216_v6.bin`，或按下方「刷机」步骤用分分区镜像保留 Wi-Fi 配网。
 
 ## 功能
 
@@ -87,9 +87,7 @@ idf.py build
 │   └── parts/                                # 分区组件（供保留 NVS 的分分区刷机）
 ├── tools/
 │   ├── flash.sh                 # 保留 NVS 的刷机脚本
-│   ├── restore.sh               # 原厂恢复辅助脚本
-│   └── reconstruct-assets.py    # 从 encoded-assets/ 还原二进制文件
-├── encoded-assets/              # 二进制文件的 base64 文本块（GitHub 文本接口限制）
+│   └── restore.sh               # 原厂恢复辅助脚本
 ├── docs/
 │   ├── port-changes.patch       # 相对上游 fork commit 的完整改动
 │   ├── BOARD.md                 # 板型说明
