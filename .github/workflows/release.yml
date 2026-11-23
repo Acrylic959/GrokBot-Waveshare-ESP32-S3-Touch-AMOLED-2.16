@@ -1,0 +1,44 @@
+name: Publish firmware release
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "encoded-assets/**"
+      - "releases/SHA256SUMS"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore binary assets
+        run: python3 tools/reconstruct-assets.py
+
+      - name: Verify merged firmware checksum
+        run: |
+          cd releases
+          sha256sum -c SHA256SUMS
+
+      - name: Publish / update v6 release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v6
+          name: GrokBot AMOLED216 v6
+          body_path: docs/RELEASE_NOTES.md
+          files: |
+            releases/grokbot_waveshare_amoled216_v6.bin
+            releases/parts/app.bin
+            releases/parts/bootloader.bin
+            releases/parts/generated_assets.bin
+            releases/parts/ota_data_initial.bin
+            releases/parts/partition-table.bin
+            releases/SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
