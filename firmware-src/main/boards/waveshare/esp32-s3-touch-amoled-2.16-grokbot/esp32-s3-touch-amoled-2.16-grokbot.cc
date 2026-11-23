@@ -237,22 +237,11 @@ private:
         power_save_timer_->SetEnabled(battery_discharging_ && !screen_locked_.load());
     }
 
-    // Only a single click of the PWR / SYS_OUT button (GPIO16) undims the
-    // screen after the idle timer lowered the brightness. Touch and the other
-    // buttons deliberately do NOT wake from power-save: hooking the touch ISR
-    // crashed the device (it reached display-lock/LVGL/NVS work from a GPIO
-    // interrupt), and LVGL's touch callback occupies the single ISR slot.
-    // WakeUp() is cheap when already awake (it only resets the idle countdown)
-    // and calls OnExitSleepMode -> RestoreBrightness only when actually dimmed.
-    void WakeFromPowerSave() {
-        if (screen_locked_.load()) {
-            return;  // a locked screen stays dark until BOOT long-press unlocks
-        }
-        if (power_save_timer_ != nullptr) {
-            power_save_timer_->WakeUp();
-        }
-    }
-
+    // Power-save wake-up is intentionally NOT bound to any key or touch:
+    // hooking the touch ISR crashed the device (display-lock/LVGL/NVS work
+    // from a GPIO interrupt), so the idle timer simply dims at 60 s and the
+    // board powers off at 300 s (5 min). Brightness is restored only through
+    // the BOOT long-press unlock path in SetScreenLocked().
     void InitializePowerSaveTimer() {
         power_save_timer_ = new PowerSaveTimer(-1, 60, 300);
         power_save_timer_->OnEnterSleepMode([this]() {
@@ -579,7 +568,6 @@ private:
         // SYS_OUT (GPIO16): pet-mode quick actions; on home it is a mute shortcut.
         sys_out_button_.OnClick([this]() {
             if (screen_locked_.load()) return;
-            WakeFromPowerSave();
             ESP_LOGI(TAG, "SYS_OUT press");
             if (display_->IsPetModeActive()) {
                 display_->TriggerPetAction(4);  // 探险

@@ -16,10 +16,11 @@ static constexpr int kEnergyDecay = 1;
 static constexpr int kHygieneDecay = 1;
 static constexpr int kFunDecay = 2;
 static constexpr int kMoodDecay = 1;
-// Level is capped at 99 (Pokemon-style). Bonds keep growing past the cap, but
-// the displayed/stored level must never exceed it, otherwise a tick that
-// recomputes 1 + bonds/10 shows 100+ and a later Clamp() snaps it back to 99.
-static constexpr int kMaxLevel = 99;
+// Level cap. Bonds keep growing past the cap, but the displayed/stored level
+// must never exceed it, otherwise a recomputed 1 + bonds/10 overshoots and a
+// later Clamp() snaps it back, making the level jump. Set to 999; with the
+// 1 + bonds/10 formula this needs bonds=9980, far beyond normal play.
+static constexpr int kMaxLevel = 999;
 static constexpr int64_t kTransientActionUs = 8 * 1000000LL;   // 8s celebration
 static constexpr int64_t kPetSpamWindowUs = 3 * 1000000LL;     // 3s anti-spam
 static constexpr int64_t kIdleAnticAfterUs = 90 * 1000000LL;   // 90s idle -> antic
