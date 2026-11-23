@@ -16,6 +16,10 @@ static constexpr int kEnergyDecay = 1;
 static constexpr int kHygieneDecay = 1;
 static constexpr int kFunDecay = 2;
 static constexpr int kMoodDecay = 1;
+// Level is capped at 99 (Pokemon-style). Bonds keep growing past the cap, but
+// the displayed/stored level must never exceed it, otherwise a tick that
+// recomputes 1 + bonds/10 shows 100+ and a later Clamp() snaps it back to 99.
+static constexpr int kMaxLevel = 99;
 static constexpr int64_t kTransientActionUs = 8 * 1000000LL;   // 8s celebration
 static constexpr int64_t kPetSpamWindowUs = 3 * 1000000LL;     // 3s anti-spam
 static constexpr int64_t kIdleAnticAfterUs = 90 * 1000000LL;   // 90s idle -> antic
@@ -45,7 +49,7 @@ void PetState::Clamp() {
     hygiene_.store(one(hygiene_.load()));
     fun_.store(one(fun_.load()));
     bonds_.store(std::max(0, bonds_.load()));
-    level_.store(std::max(1, std::min(99, level_.load())));
+    level_.store(std::max(1, std::min(kMaxLevel, level_.load())));
 }
 
 void PetState::Save() const {
@@ -124,7 +128,7 @@ void PetState::CheckGrowth() {
             ESP_LOGI(TAG, "Achievement: grown up");
         }
     }
-    const int target_level = 1 + bonds_.load() / 10;
+    const int target_level = std::min(kMaxLevel, 1 + bonds_.load() / 10);
     if (target_level > level_.load()) {
         level_.store(target_level);
         if (level_.load() >= 5) achievements_.fetch_or(kAchLevel5);
@@ -194,8 +198,8 @@ void PetState::Tick() {
     }
     health_ = std::max(health_.load(), 15);  // never fatal
     growth_minutes_.fetch_add(minutes);
-    Clamp();
     CheckGrowth();
+    Clamp();
     Save();
 
     ESP_LOGI(TAG, "Tick(-%d min): %s", minutes, Describe().c_str());

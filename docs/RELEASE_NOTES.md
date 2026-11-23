@@ -1,12 +1,33 @@
-# GrokBot AMOLED216 v23
+# GrokBot AMOLED216 v24
 
 预编译固件，适用于 **Waveshare ESP32-S3-Touch-AMOLED-2.16**（ESP32-S3R8 / 16MB Flash / 8MB PSRAM / 480×480 CO5300 AMOLED）。
 
 ![宠物页预览](images/pet_ui_v20_rings_preview_v3.png)
 
+v24 修复等级到 99 后反复跳变的问题。界面样式不变。
+
+## v24 变更
+
+用户反馈：等级到达 100 级以上后，过一段时间会自动跳回 99 级。
+
+**根因**：`Clamp()` 把等级封顶在 99，但 `CheckGrowth()` 用 `1 + bonds/10` 无上限升级。当亲密度（bonds）累积到 1020+ 时，每次互动 / 静置 tick 都算出目标等级 103，触发一条 `Level up -> 103` 日志并把等级写到 103，随后又在别处被 `Clamp()` 压回 99——于是等级在 99 与 100+ 之间来回跳。实机日志证实：连续 10 次 PWR 探险伴随 10 条 `Level up -> 103`。此外 `MarkAction()` 与 `Tick()` 里 `CheckGrowth()` / `Clamp()` 的调用顺序相反，进一步加剧不一致。
+
+**修复**：
+
+- 新增 `kMaxLevel = 99` 常量，`Clamp()` 与 `CheckGrowth()` 统一使用它封顶。
+- `CheckGrowth()` 目标等级改为 `min(99, 1 + bonds/10)`，达到 99 后不再触发虚假升级。
+- 统一 `MarkAction()` 与 `Tick()` 的调用顺序为 `CheckGrowth()` → `Clamp()` → `Save()`，保证显示与存盘一致。
+- 等级稳定封顶 Lv.99，不再跳变；其余功能（探险 10 事件、字幕去重、省电仅 PWR 唤醒、崩溃修复、角色裁剪、四层运动环、摇一摇头晕）全部保留。
+
+镜像：`grokbot_waveshare_amoled216_v24.bin`（SHA256 `70b7f612b018b57fbd4be953e9aae4dd4b0240cf78d477f777bd73d0f6c13f94`）。刷机脚本 `./flash_grokbot_v24.sh`。
+
+---
+
+## v23 变更（历史）
+
 v23 修复省电降亮度后点击屏幕崩溃的问题，并按要求把退出省电的方式收敛为「仅 PWR 单击」。界面样式不变。
 
-## v23 变更
+### v23 详细说明
 
 用户反馈：v22 在省电模式自动降亮度后点击屏幕会崩溃重启。
 
@@ -76,15 +97,15 @@ v22 继承 v21 的角色图集子区域裁剪（252×286 / 360×360，每帧送�
 ```bash
 pip3 install esptool pyserial
 ./tools/flash.sh /dev/cu.usbmodem2101                       # 保留 NVS（推荐）
-./flash_grokbot_v23.sh /dev/cu.usbmodem2101                 # 工作区内专用脚本
-./flash_grokbot_v23.sh /dev/cu.usbmodem2101 AUTO            # 跳过确认
+./flash_grokbot_v24.sh /dev/cu.usbmodem2101                 # 工作区内专用脚本
+./flash_grokbot_v24.sh /dev/cu.usbmodem2101 AUTO            # 跳过确认
 ```
 
-整片镜像 `grokbot_waveshare_amoled216_v23.bin`（SHA256 `af177357d96260a823dfb6106d3fea04a2b6f27a15e72f521d1e711f167a85e7`）可直烧 0x0（会清 NVS，适合全新板子）。
+整片镜像 `grokbot_waveshare_amoled216_v24.bin`（SHA256 `70b7f612b018b57fbd4be953e9aae4dd4b0240cf78d477f777bd73d0f6c13f94`）可直烧 0x0（会清 NVS，适合全新板子）。
 
 ## 回滚
 
-`./flash_grokbot_v22.sh`（工作区内，保留 NVS）。`releases/` 保留 v6–v23（跳过未发布的 v19）全部镜像与分分区组件。
+`./flash_grokbot_v23.sh`（工作区内，保留 NVS）。`releases/` 保留 v6–v24（跳过未发布的 v19）全部镜像与分分区组件。
 
 ## 历史
 

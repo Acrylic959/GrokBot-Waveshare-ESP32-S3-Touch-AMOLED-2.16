@@ -30,7 +30,7 @@
 | `main/Kconfig.projbuild` | 注册 `BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_AMOLED_2_16_GROKBOT` |
 | `main/CMakeLists.txt` | 板型源码 / 字体 / assets / esp_rom 依赖 |
 | `main/display/grokbot_display.cc/.h` | v7 帧率 30fps（音频活跃 15fps / 省电 10fps）、锁屏暂停动画、反向播放解码路径精简、诊断日志；v9 idle 时由宠物状态驱动表情；v11 加入待机小动作；v12 独立宠物页；v14 宝可梦风格四边属性环；v15 属性名嵌条、四按钮、点击抚摸（playful）、静置 1 分钟自动睡眠（sleeping）；v16 黑白 UI（角色保持原色）、四条 14px 等宽属性条 + 四个 arc 连成连续圆角矩形环、属性名居中、按钮 92×64 间距 4px；v17 删除 arc，四根 14px 圆角 bar 首尾重叠成环、标签无底色按填充反色、字幕移到等级下方；v18 标签换 14px 字体、竖条文字旋转 90°、反馈字幕上移、横条独占四角不再重叠；v20 改用四个 lv_line 绘制同心圆角运动环（无底轨道、未满圆头/满值闭合、等距圆角）、删除属性名标签、反馈数值按环色显示、按钮下移；v21 角色图集改用子区域 image descriptor（252×286，data 偏移到内容 bbox，保留整帧 stride），emoji_box_ 固定整帧尺寸并把角色 image 用 LV_ALIGN_TOP_LEFT 定位到 bbox 起点，视觉零变化但每帧脏区/合成/送屏面积减 44%
-| `main/display/pet_state.cc/.h` | v9 新增电子宠物；v11 重写为完整养成系统：六维状态（心情/饱腹/活力/健康/清洁/乐趣）、等级/成长阶段/亲密度/成就、抚摸防刷分、探险事件、睡眠与永不死亡机制、离线衰减；v22 探险事件扩至 10 种（esp_random+计数器混合种子），文案去掉内嵌数值与"探险："前缀（数值统一由彩色 delta 标签显示，修复重复） |
+| `main/display/pet_state.cc/.h` | v9 新增电子宠物；v11 重写为完整养成系统：六维状态（心情/饱腹/活力/健康/清洁/乐趣）、等级/成长阶段/亲密度/成就、抚摸防刷分、探险事件、睡眠与永不死亡机制、离线衰减；v22 探险事件扩至 10 种（esp_random+计数器混合种子），文案去掉内嵌数值与"探险："前缀（数值统一由彩色 delta 标签显示，修复重复）；v24 新增 kMaxLevel=99 并让 CheckGrowth 升级封顶，修复等级在 99 与 100+ 间跳变 |
 | `main/application.cc` | v7 OTA 版本检查前 3 次失败静默（配网 error 降噪） |
 | `main/audio/audio_codec.h` | 本板 I2S ISR IRAM、DMA 8×360（120ms）、中断优先级 3 |
 | `main/audio/codecs/box_audio_codec.cc` | 应用 I2S 中断优先级配置 |
@@ -38,7 +38,7 @@
 | `main/boards/common/wifi_board.cc/.h` | v8 联网后固化公共 DNS + 3 秒后重设（防 DHCP 覆盖），根治 `api.tenclass.net` 解析失败 |
 | `main/audio/audio_codec.cc/.h` | v8 静音会话级（新增 `SetOutputVolume(volume, persist)`），开机音量默认 70 |
 | `main/protocols/*`, `main/mcp_server.*`, `main/ota.*` | v8 从上游 v2.6.0 全量合入，适配 `ProcessPending` / `AddClientCapabilities` / `AddSystemStatus` |
-| `CMakeLists.txt` | 版本号（当前 v23：`2.6.0-grokbot-v23`） |
+| `CMakeLists.txt` | 版本号（当前 v24：`2.6.0-grokbot-v24`） |
 | `sdkconfig` / 板型 `config.json` | v9 曾改 Multinet 自定义唤醒词；v10 起回退到 v8 的 AFE WakeNet `wn9_hiesp`，v11 保持不变 |
 | 板型 `config.h` | v10 删除 `ROTATE_FADE_*` / `ROTATE_FLIP_*` 动画参数，v11 保持不变 |
 | 板型 `.cc` | v10 删除全部旋转动画、宠物互动改触屏；v11 修复触屏（改轮询输入设备，绕开 LVGL 事件吞噬）、触屏纵向五分区 + 双击探险 + 长按状态页、AXP2101 I2C 探测重试 5 次避免热刷机重启、BOOT 双击投喂；v13 Key3/SYS_OUT 按键；v14 辅助键有效电平开机检测、Key3 按下沿单击切换宠物页、静音改用虚拟单参 `SetOutputVolume()` 真正下发 ES8311 音量 |
@@ -68,7 +68,8 @@
 | **v20** | 四层运动环 + 彩色反馈 + 摇一摇头晕 + 环位图四条带优化 + 删 BOOT 三击静音 + 修复进页死锁 | `9d51ac54` |
 | v21 | 方向3：角色图集子区域裁剪（252×286 / 360×360），每帧脏区与送屏面积减 44%，视觉零变化 | `b98184bf` |
 | v22 | 探险事件扩至10种+硬件随机源+各自动画 + 探险字幕去重并删"探险："前缀 + 省电降亮度后触屏/按键唤醒（该唤醒实现存在 ISR 崩溃） | `8ebb1200` |
-| **v23** | **修复省电降亮度后点击屏幕崩溃（移除触摸 ISR 唤醒）+ 退出省电收敛为仅 PWR 单击，界面不变** | **`af177357`** |
+| v23 | 修复省电降亮度后点击屏幕崩溃（移除触摸 ISR 唤醒）+ 退出省电收敛为仅 PWR 单击，界面不变 | `af177357` |
+| **v24** | **修复等级到99后跳变：CheckGrowth 用 kMaxLevel=99 封顶 + 统一 Clamp 顺序，等级稳定不再虚假升级到103** | **`70b7f612`** |
 
 完整 SHA256 见 `releases/SHA256SUMS`。
 
