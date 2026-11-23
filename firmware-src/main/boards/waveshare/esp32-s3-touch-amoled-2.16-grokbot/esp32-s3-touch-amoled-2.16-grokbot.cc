@@ -1,5 +1,6 @@
 #include "wifi_board.h"
 #include "display/grokbot_display.h"
+#include "display/pet_state.h"
 #include "esp_lcd_co5300.h"
 
 #include "codecs/box_audio_codec.h"
@@ -197,9 +198,7 @@ private:
     lv_display_rotation_t applied_rotation_ = LV_DISPLAY_ROTATION_0;
     Motion::AccelSample last_accel_;
     int volume_before_mute_ = -1;  // -1 = not muted; otherwise restored volume
-    lv_obj_t* rotation_curtain_ = nullptr;
-    int pending_rotation_ = -1;
-    bool rotation_busy_ = false;
+    TaskHandle_t pet_task_handle_ = nullptr;
 
     void UpdatePowerSaveTimer() {
         // Discharging enables the idle timer; a locked screen must suspend it so
@@ -287,46 +286,9 @@ private:
         return ay > 0 ? LV_DISPLAY_ROTATION_90 : LV_DISPLAY_ROTATION_270;
     }
 
-    // The rotation itself is a single hardware MADCTL switch, so there is no
-    // in-between frame to interpolate. We hide that hard switch behind a quick
-    // full-screen black curtain: fade in -> apply rotation -> fade out. All
-    // LVGL calls run under the (recursive) display lock from the LVGL task.
-    static void RotationAnimExec(void* obj, int32_t value) {
-        lv_obj_set_style_bg_opa(static_cast<lv_obj_t*>(obj),
-                                static_cast<lv_opa_t>(value), 0);
-    }
-
-    static void RotationFadeInDone(lv_anim_t* anim) {
-        auto* self = static_cast<WaveshareEsp32s3TouchAMOLED216GrokBot*>(anim->user_data);
-        self->OnRotationFadeInDone();
-    }
-
-    static void RotationFadeOutDone(lv_anim_t* anim) {
-        auto* self = static_cast<WaveshareEsp32s3TouchAMOLED216GrokBot*>(anim->user_data);
-        self->OnRotationFadeOutDone();
-    }
-
-    void EnsureRotationCurtain() {
-        if (rotation_curtain_ != nullptr && lv_obj_is_valid(rotation_curtain_)) {
-            return;
-        }
-        rotation_curtain_ = lv_obj_create(lv_layer_top());
-        lv_obj_set_size(rotation_curtain_, LV_HOR_RES, LV_VER_RES);
-        lv_obj_set_pos(rotation_curtain_, 0, 0);
-        lv_obj_set_style_bg_color(rotation_curtain_, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(rotation_curtain_, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(rotation_curtain_, 0, 0);
-        lv_obj_set_style_pad_all(rotation_curtain_, 0, 0);
-        lv_obj_set_style_radius(rotation_curtain_, 0, 0);
-        lv_obj_clear_flag(rotation_curtain_, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_flag(rotation_curtain_, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(rotation_curtain_, LV_OBJ_FLAG_CLICKABLE);
-    }
-
+    // Rotation is a single hardware MADCTL switch; apply it directly with no
+    // transition animation. LVGL calls run under the display lock.
     void ApplyRotation(int rotation) {
-        if (rotation_busy_) {
-            return;
-        }
         DisplayLockGuard lock(display_);
         if (!lock) {
             ESP_LOGW(TAG, "AutoRotate: failed to lock display");
@@ -338,73 +300,11 @@ private:
             applied_rotation_ = target;
             return;
         }
-
-        pending_rotation_ = rotation;
-        rotation_busy_ = true;
-        EnsureRotationCurtain();
-
-        lv_obj_remove_flag(rotation_curtain_, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(rotation_curtain_);
-        // Keep the curtain sized for the current orientation.
-        lv_obj_set_size(rotation_curtain_, LV_HOR_RES, LV_VER_RES);
-        lv_obj_set_pos(rotation_curtain_, 0, 0);
-        lv_obj_set_style_bg_opa(rotation_curtain_, LV_OPA_TRANSP, 0);
-
-        lv_anim_t anim;
-        lv_anim_init(&anim);
-        lv_anim_set_var(&anim, rotation_curtain_);
-        lv_anim_set_values(&anim, LV_OPA_TRANSP, LV_OPA_COVER);
-        lv_anim_set_duration(&anim, ROTATE_FADE_IN_MS);
-        lv_anim_set_exec_cb(&anim, RotationAnimExec);
-        lv_anim_set_completed_cb(&anim, RotationFadeInDone);
-        lv_anim_set_user_data(&anim, this);
-        lv_anim_start(&anim);
-        ESP_LOGI(TAG, "AutoRotate: transition -> %d deg (ax=%d ay=%d az=%d)",
+        lv_display_set_rotation(disp, target);
+        lv_obj_invalidate(lv_screen_active());
+        applied_rotation_ = target;
+        ESP_LOGI(TAG, "AutoRotate: -> %d deg (ax=%d ay=%d az=%d)",
                  rotation * 90, last_accel_.x, last_accel_.y, last_accel_.z);
-    }
-
-    void OnRotationFadeInDone() {
-        DisplayLockGuard lock(display_);
-        if (!lock) {
-            rotation_busy_ = false;
-            return;
-        }
-        lv_display_t* disp = lv_display_get_default();
-        if (disp != nullptr && pending_rotation_ >= 0) {
-            // Hardware MADCTL + touch point rotation happen here, fully hidden.
-            lv_display_set_rotation(disp, static_cast<lv_display_rotation_t>(pending_rotation_));
-            lv_obj_invalidate(lv_screen_active());
-            applied_rotation_ = static_cast<lv_display_rotation_t>(pending_rotation_);
-        }
-
-        // Re-fit the curtain to the new orientation and fade it back out.
-        if (rotation_curtain_ != nullptr && lv_obj_is_valid(rotation_curtain_)) {
-            lv_obj_set_size(rotation_curtain_, LV_HOR_RES, LV_VER_RES);
-            lv_obj_set_pos(rotation_curtain_, 0, 0);
-            lv_obj_set_style_bg_opa(rotation_curtain_, LV_OPA_COVER, 0);
-        }
-        lv_anim_t anim;
-        lv_anim_init(&anim);
-        lv_anim_set_var(&anim, rotation_curtain_);
-        lv_anim_set_values(&anim, LV_OPA_COVER, LV_OPA_TRANSP);
-        lv_anim_set_duration(&anim, ROTATE_FADE_OUT_MS);
-        lv_anim_set_exec_cb(&anim, RotationAnimExec);
-        lv_anim_set_completed_cb(&anim, RotationFadeOutDone);
-        lv_anim_set_user_data(&anim, this);
-        lv_anim_start(&anim);
-    }
-
-    void OnRotationFadeOutDone() {
-        DisplayLockGuard lock(display_);
-        if (!lock) {
-            rotation_busy_ = false;
-            return;
-        }
-        if (rotation_curtain_ != nullptr && lv_obj_is_valid(rotation_curtain_)) {
-            lv_obj_add_flag(rotation_curtain_, LV_OBJ_FLAG_HIDDEN);
-        }
-        pending_rotation_ = -1;
-        rotation_busy_ = false;
     }
 
     static void AutoRotateTaskEntry(void* arg) {
@@ -511,9 +411,99 @@ private:
             GetDisplay()->ShowNotification("Volume On");
         } else {
             volume_before_mute_ = current;
-            codec->SetOutputVolume(0);
+            // Mute is session-only: do not persist 0 to NVS, otherwise a reboot
+            // restores a near-silent volume of 10 instead of the real setting.
+            codec->SetOutputVolume(0, false);
             ESP_LOGI(TAG, "Muted (saved volume %d)", current);
             GetDisplay()->ShowNotification("Muted");
+        }
+    }
+
+    // ---- Electronic pet interactions -------------------------------------
+    void FeedPet() {
+        if (screen_locked_.load()) return;
+        // Feed() records a transient action; SuggestEmotion() shows "happy"
+        // for a few seconds, then falls back to the ambient pet state. Do not
+        // call SetEmotion() here — that persists until the app changes it.
+        PetState::GetInstance().Feed();
+        GetDisplay()->ShowNotification("投喂成功 " + PetState::GetInstance().Describe(), 2500);
+    }
+
+    void PlayWithPet() {
+        if (screen_locked_.load()) return;
+        PetState::GetInstance().Play();
+        GetDisplay()->ShowNotification("一起玩耍 " + PetState::GetInstance().Describe(), 2500);
+    }
+
+    void CaressPet() {
+        if (screen_locked_.load()) return;
+        PetState::GetInstance().Pet();
+        GetDisplay()->ShowNotification("抚摸 " + PetState::GetInstance().Describe(), 2000);
+    }
+
+    // Touch interaction: the screen is split into three horizontal bands.
+    // lv_indev_get_point() returns logical (post-rotation) coordinates, so the
+    // bands stay correct in every orientation.
+    //   top    (0 .. 1/3)  -> play
+    //   middle (1/3 .. 2/3) -> caress / pet
+    //   bottom (2/3 .. 1)  -> feed
+    static void PetTouchEventCb(lv_event_t* e) {
+        auto* self = static_cast<WaveshareEsp32s3TouchAMOLED216GrokBot*>(
+            lv_event_get_user_data(e));
+        if (self == nullptr || self->screen_locked_.load()) {
+            return;
+        }
+        lv_indev_t* indev = lv_event_get_indev(e);
+        if (indev == nullptr) {
+            return;
+        }
+        lv_point_t point;
+        lv_indev_get_point(indev, &point);
+        const int h = LV_VER_RES;
+        if (point.y < h / 3) {
+            self->PlayWithPet();
+        } else if (point.y < h * 2 / 3) {
+            self->CaressPet();
+        } else {
+            self->FeedPet();
+        }
+    }
+
+    void InitializePetTouch() {
+        lv_obj_t* screen = lv_screen_active();
+        if (screen == nullptr) {
+            ESP_LOGW(TAG, "Pet touch: no active screen");
+            return;
+        }
+        lv_obj_add_event_cb(screen, PetTouchEventCb, LV_EVENT_CLICKED, this);
+        ESP_LOGI(TAG, "Pet touch interaction ready (top=play, middle=pet, bottom=feed)");
+    }
+
+    static void PetTaskEntry(void* arg) {
+        auto* self = static_cast<WaveshareEsp32s3TouchAMOLED216GrokBot*>(arg);
+        self->PetTask();
+        vTaskDelete(nullptr);
+    }
+
+    void PetTask() {
+        while (true) {
+            vTaskDelay(pdMS_TO_TICKS(60000));  // decay check once a minute
+            // GrokbotDisplay::EffectiveAnimationName() queries SuggestEmotion()
+            // every frame while idle, so no explicit SetEmotion() is needed —
+            // the face updates automatically as the pet's stats decay.
+            PetState::GetInstance().Tick();
+        }
+    }
+
+    void InitializePet() {
+        PetState::GetInstance().Initialize();
+        if (xTaskCreate(PetTaskEntry, "pet_tick", 2048, this, 1,
+                        &pet_task_handle_) != pdPASS) {
+            pet_task_handle_ = nullptr;
+            ESP_LOGW(TAG, "Failed to create pet tick task");
+        } else {
+            ESP_LOGI(TAG, "Electronic pet ready: %s",
+                     PetState::GetInstance().Describe().c_str());
         }
     }
 
@@ -534,20 +524,8 @@ private:
             SetScreenLocked(!screen_locked_.load());
         });
 
-        // Triple-click: mute / unmute (independent of single/double click).
+        // Triple-click: mute / unmute. Pet interactions moved to touch screen.
         boot_button_.OnMultipleClick([this]() { ToggleMute(); }, 3);
-
-#if CONFIG_USE_DEVICE_AEC
-        boot_button_.OnDoubleClick([this]() {
-            if (screen_locked_.load()) {
-                return;
-            }
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateIdle) {
-                app.SetAecMode(app.GetAecMode() == kAecOff ? kAecOnDeviceSide : kAecOff);
-            }
-        });
-#endif
     }
 
     void InitializeDisplay() {
@@ -654,6 +632,8 @@ public:
         InitializeTouch();
         InitializeButtons();
         InitializeTools();
+        InitializePet();
+        InitializePetTouch();
         InitializeAutoRotate();
         // Start with Wi-Fi modem sleep off; SetPowerSaveLevel will toggle it
         // back on only while the device is truly idle.
