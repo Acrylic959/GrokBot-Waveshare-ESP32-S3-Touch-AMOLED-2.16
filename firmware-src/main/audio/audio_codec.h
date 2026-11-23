@@ -39,6 +39,10 @@ public:
     virtual ~AudioCodec();
     
     virtual void SetOutputVolume(int volume);
+    // Set output volume; when persist=false the level is applied for this
+    // session only and not written to NVS (used by transient mute toggles so a
+    // muted reboot does not leave the persisted volume at 0).
+    virtual void SetOutputVolume(int volume, bool persist);
     virtual void SetInputGain(float gain);
     virtual void EnableInput(bool enable);
     virtual void EnableOutput(bool enable);
