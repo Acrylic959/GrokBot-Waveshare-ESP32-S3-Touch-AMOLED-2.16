@@ -23,6 +23,9 @@ public:
     void SetupUI() override;
     bool SetEmotion(const char* emotion) override;
     void SetStatus(const char* status) override;
+    void SetChatMessage(const char* role, const char* content) override;
+    void RemoveChatMessage(const char* role, const char* content) override;
+    void ClearChatMessages() override;
     void ShowNotification(const char* notification, int duration_ms = 3000) override;
     void ShowNotification(const std::string& notification, int duration_ms = 3000) override;
     void SetPowerSaveMode(bool on) override;
@@ -104,11 +107,12 @@ private:
     // Pet mode overlay (built on top of the shared character image).
     lv_obj_t* pet_panel_ = nullptr;
     lv_obj_t* pet_title_ = nullptr;
+    lv_obj_t* pet_subtitle_ = nullptr;
     lv_obj_t* pet_feedback_ = nullptr;
-    // Continuous monochrome rounded-rectangle ring: 4 straight bars + 4 arcs.
+    // Four rounded bars overlap at their ends to form one rounded rectangle.
     lv_obj_t* pet_ring_ = nullptr;
     lv_obj_t* pet_bars_[4] = {};
-    lv_obj_t* pet_corner_arcs_[4] = {};
+    lv_obj_t* pet_stat_labels_[4] = {};
     // Only 4 on-screen buttons: feed / play / clean / explore.
     lv_obj_t* pet_buttons_[4] = {};
     bool pet_saved_status_visible_ = true;
