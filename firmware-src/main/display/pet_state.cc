@@ -2,6 +2,7 @@
 #include "settings.h"
 
 #include <esp_log.h>
+#include <esp_random.h>
 #include <esp_timer.h>
 
 #include <algorithm>
@@ -137,8 +138,9 @@ void PetState::CheckAchievements() {
     if (bonds_.load() >= 50) achievements_.fetch_or(kAchBond50);
 }
 
-void PetState::MarkAction(int action, const char* /*emotion*/) {
+void PetState::MarkAction(int action, const char* emotion) {
     last_action_.store(action);
+    last_mark_emotion_.store(emotion);
     last_action_us_.store(esp_timer_get_time());
     last_interact_us_.store(last_action_us_.load());
     bonds_.fetch_add(1);
@@ -261,35 +263,67 @@ const char* PetState::Clean() {
 
 const char* PetState::Explore() {
     if (sleeping_.load()) return "它睡着了，先唤醒它";
-    // Deterministic-enough random event from esp_timer low bits.
-    const uint32_t seed = static_cast<uint32_t>(esp_timer_get_time() / 1000);
-    const int event = seed % 5;
+    // Ten possible discoveries so a PET/探险 button press rarely repeats.
+    // Mix a hardware RNG with a per-call counter: the old "millis % 5" seed
+    // tended to return the same event on rapid consecutive presses.
+    static uint32_t counter = 0;
+    uint32_t seed = esp_random() ^ (++counter * 2654435761u);
+    const int event = seed % 10;
+    // IMPORTANT: return only the plain description.  The numeric deltas are
+    // appended by GrokbotDisplay::ShowPetFeedbackDeltas() as coloured labels
+    // derived from the before/after stats.  Including numbers here made e.g.
+    // "清洁 -12" appear twice (once in text, once as a coloured delta).
     switch (event) {
         case 0:
             satiety_ += 15;
             MarkAction(5, "surprised");
-            return "探险：找到了食物 +15饱腹";
+            return "找到了吃的！";
         case 1:
             fun_ += 20;
             mood_ += 8;
             MarkAction(5, "proud");
-            return "探险：发现新玩具 +20乐趣";
+            return "发现新玩具";
         case 2:
             hygiene_ -= 12;
             mood_ -= 5;
             MarkAction(5, "sad");
-            return "探险：滚进泥坑 -12清洁";
+            return "滚进泥坑啦";
         case 3:
             energy_ -= 10;
             satiety_ -= 6;
             MarkAction(5, "curious");
-            return "探险：跑了很远，有点饿";
-        default:
+            return "跑了很远，有点饿";
+        case 4:
             health_ += 5;
             mood_ += 10;
             achievements_.fetch_or(kAchExplorer);
             MarkAction(5, "laughing");
-            return "探险：交到新朋友 +5健康";
+            return "交到新朋友";
+        case 5:
+            fun_ += 12;
+            mood_ += 6;
+            MarkAction(5, "excited");
+            return "追蝴蝶玩得好开心";
+        case 6:
+            hygiene_ -= 8;
+            fun_ += 14;
+            MarkAction(5, "playful");
+            return "在草地上打了个滚";
+        case 7:
+            satiety_ += 10;
+            energy_ += 6;
+            MarkAction(5, "happy");
+            return "偷吃到甜甜的花蜜";
+        case 8:
+            health_ -= 6;
+            mood_ -= 4;
+            MarkAction(5, "scared");
+            return "被大雨淋湿了";
+        default:
+            fun_ += 18;
+            achievements_.fetch_or(kAchExplorer);
+            MarkAction(5, "curious");
+            return "发现一处秘密基地";
     }
 }
 
@@ -336,7 +370,12 @@ const char* PetState::SuggestEmotion() const {
             case 2: return "excited";
             case 3: return "playful";
             case 4: return "shy";
-            case 5: return "surprised";
+            case 5: {
+                // Explore sets a distinct emotion per outcome; fall back to
+                // surprised for any other caller of MarkAction(5, ...).
+                const char* e = last_mark_emotion_.load();
+                return e != nullptr ? e : "surprised";
+            }
             case 6: return "sleeping";
             case 7: return "waking";
             default: break;

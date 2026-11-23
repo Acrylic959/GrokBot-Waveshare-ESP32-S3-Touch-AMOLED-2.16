@@ -1,81 +1,76 @@
-# GrokBot AMOLED216 v21
+# GrokBot AMOLED216 v22
 
 预编译固件，适用于 **Waveshare ESP32-S3-Touch-AMOLED-2.16**（ESP32-S3R8 / 16MB Flash / 8MB PSRAM / 480×480 CO5300 AMOLED）。
 
-![v20 宠物页预览（v21 视觉完全一致）](images/pet_ui_v20_rings_preview_v3.png)
+![宠物页预览](images/pet_ui_v20_rings_preview_v3.png)
 
-v21 是**纯性能优化版本**：把角色图集只渲染到实际有内容的区域，界面样式、颜色、玩法与 v20 完全一致（视觉零变化）。v20 的详细改动见下方「历史」。
+v22 修复三个实机反馈问题，界面样式不变。
 
-## 本版本变更：方向 3 — 静态 UI 分层 / 只渲染动态内容
+## 本版本变更
 
-GrokBot 的 360×360 图集里，每一帧的可见角色都落在固定的内容边界内，边界之外全黑。逐帧解码统计全部 28 个 clip 的所有帧，得到全局内容 bbox：
+### 1. 探险事件扩充到 10 种（PWR / SYS_OUT 键）
 
-```text
-x[54..305] y[26..311]  →  252×286
-面积 252×286 / 360×360 = 55.6%  （比整帧少 44%）
-```
+用户反馈：宠物页按 PWR（SYS_OUT / GPIO16）键几乎总是触发同一种探险事件。根因是旧版用 `esp_timer` 毫秒低 5 位做种子（`millis % 5`），连续按容易重复。
 
-改动：
+- 探险随机结果从 **5 种扩充到 10 种**：找到吃的 / 发现新玩具 / 滚进泥坑 / 跑了很远有点饿 / 交到新朋友 / 追蝴蝶 / 草地打滚 / 偷吃花蜜 / 大雨淋湿 / 秘密基地。
+- 随机源改为 `esp_random()` 硬件随机数 ⊕ 递增计数器（Knuth 乘法常量），连续按很少重复。
+- 每种事件配独立的有效动画（happy / excited / laughing / sad / scared / curious …）。
 
-- `image_descs_[i]` 从整帧 360×360 改为**子区域 descriptor**：`header.w/h = 252×286`，data 指针偏移到 `(y=26, x=54)`，但 `stride` 仍保留整帧的 720 字节（同一块 buffer，不拷贝像素）。
-- `emoji_box_` 固定为整帧 360×360，角色 image 用 `LV_ALIGN_TOP_LEFT` 定位到 `(54, 26)`，因此屏幕上角色位置、大小与 v20 完全相同。
-- LVGL 9 的 `lv_image_set_src()` 会 invalidate 整个 image 对象；对象从 360×360 缩到 252×286 后，**每帧的脏区、软件合成、QSPI 送屏面积减少约 44%**。
-- 已核对 LVGL 9 解码器路径：`CONFIG_LV_DRAW_BUF_STRIDE_ALIGN=1` 使 stride 重排不触发，bin decoder 直接沿用自定义 stride 与 data 偏移，裁剪安全。
+### 2. 探险字幕去重 + 删除「探险：」前缀
 
-### 性能预期（基于 v20 实机基线）
+用户反馈：「滚进泥坑」出现两个「清洁 -12」，且文案带「探险：」前缀。根因：`Explore()` 文案里写了数值（`探险：滚进泥坑 -12清洁`），而 `ShowPetFeedbackDeltas()` 又根据属性差自动生成彩色数值标签「清洁 -12」，同一数值显示两次。
 
-v20 稳态日志（`laughing`）：`fps≈20，render≈49ms = decode≈36ms + present≈13ms`。
+- `Explore()` 现在只返回纯描述（如「滚进泥坑啦」），不再内嵌数值。
+- 数值统一由彩色 delta 标签显示一次，颜色对应四层运动环。
+- 删除所有「探险：」前缀。
 
-- 方向 3 只作用于 `present`（合成 + 送屏），**预计 present 下降**；`decode` 是解码/展开图集，不受影响。
-- 由于 decode 占约 73%，整体 fps 提升幅度取决于 present 中合成/送屏的占比。
+### 3. 省电降亮度后触屏 / 按键唤醒
 
-### 实机验证（2026-11-24 已刷入）
+用户反馈：省电模式自动降亮度后无法用触屏或按键恢复。根因：触摸输入与大部分按键路径没有调用 `PowerSaveTimer::WakeUp()`，只有 BOOT 解锁和系统状态切换才会恢复。
 
-启动正常：`App version: 2.6.0-grokbot-v21`、`Atlas ready: 360x360`、`Pet panel ready`、无 `assert failed` / `Rebooting`，NVS 保留、Wi-Fi 自动重连、MQTT 连通。视觉与 v20 逐像素一致。
+- 注册触摸中断回调 `TouchWakeupCb`，任意触屏 → `WakeFromPowerSave()`。
+- BOOT 单击、Key3 按下、SYS_OUT 单击均调用 `WakeFromPowerSave()`。
+- `WakeFromPowerSave()` 在锁屏时直接返回（锁屏保持黑暗，直到 BOOT 长按解锁），否则 `WakeUp()` → `ExitSleepMode()` → `RestoreBrightness()`。
+- 已唤醒时 `WakeUp()` 只是重置空闲倒计时，开销可忽略。
 
-性能 A/B（抓取 `Animation fps` 日志，首页无宠物 UI 叠加、同状态 `notifying`、同时间点约 7 秒，最干净对照）：
+### 4. 探险各事件配独立动画（附带修复）
 
-| 指标 | v20 | v21 | 变化 |
-| --- | --- | --- | --- |
-| present | 6994 us | 3174 us | **-55%** |
-| render | 32267 us | 23368 us | **-28%** |
-| decode | 25190 us | 20115 us | -20%（波动，非裁剪贡献） |
+实机验证时发现所有探险动画都固定为 `surprised`：`SuggestEmotion()` 里 `case 5` 硬编码，忽略了 `Explore()` 给每个事件设的 emotion。v22 让 `MarkAction()` 保存传入 emotion，探险分支返回它，现在不同事件配不同动画（happy / excited / sad / scared / laughing …）。
 
-- 稳态 `laughing`（首页）fps 从 v20 约 19–20 提升到 v21 约 22。
-- 宠物页交互密集时（投喂/玩耍/连续摸角色）present 仍在 16–24ms、fps 18–22，因为角色脏区与底部按钮、环边 strip 重叠——这是 v20 已知的宠物页叠加瓶颈，方向 3 不解决它。
-- decode 是主要瓶颈且不受裁剪影响，所以整体 fps 提升有限（notifying 单点 fps 未变，render 降 28% 但被 30fps 目标与调度掩盖）。
+## 实机验证（2026-11-24）
 
-## 保留的玩法（与 v20 一致）
+- 刷入正常：`App version: 2.6.0-grokbot-v22`、`Atlas ready 360x360`、`Pet panel ready`，无 `assert failed` / `Rebooting`。
+- **探险多样化已确认**：日志 `logs/grokbot_v22_interaction.log` 中连续 13 次 SYS_OUT 单击触发了 10 种不同事件（找吃的 / 新玩具 / 滚进泥坑 / 跑远有点饿 / 交到新朋友 / 追蝴蝶 / 草地打滚 / 偷吃花蜜 / 大雨淋湿 / 秘密基地），文案为纯描述、无重复数值。
+- **省电唤醒**：代码路径已实现并编译通过（触摸中断回调 + BOOT/Key3/SYS_OUT 三键）；但插 USB 供电时 `battery_discharging_=false` 会禁用省电定时器，无法在当前连接状态复现，需拔掉 USB 用电池静置 60 秒后触摸验证。
 
-| 操作 | 效果 | 动画 |
-| --- | --- | --- |
-| Key3（GPIO18）单击 | 进入 / 退出宠物页 | — |
-| 投喂 / 玩耍 / 清洁 / 探险 | 对应数值变化 | `happy` / `excited` / `shy` / `surprised` |
-| 点击屏幕中央角色 | 抚摸（防刷分冷却） | `playful` |
-| 宠物页静置 1 分钟 | 自动入睡 | `sleeping` |
-| 摇一摇设备 | 头晕动画，按 `confused` clip 实际长度完整播放（首页 / 宠物页均生效） | `confused` |
-| 语音唤醒助手 | 宠物页立即隐藏，回到主界面 | — |
+## 性能与视觉
+
+v22 继承 v21 的角色图集子区域裁剪（252×286 / 360×360，每帧送屏面积减约 44%），视觉零变化。v21 实机 A/B（首页 notifying 同状态）present 6994→3174us（-55%）。
 
 ## 刷机
 
 ```bash
 pip3 install esptool pyserial
 ./tools/flash.sh /dev/cu.usbmodem2101                       # 保留 NVS（推荐）
-./flash_grokbot_v21.sh /dev/cu.usbmodem2101                 # 工作区内专用脚本
-./flash_grokbot_v21.sh /dev/cu.usbmodem2101 AUTO            # 跳过确认
+./flash_grokbot_v22.sh /dev/cu.usbmodem2101                 # 工作区内专用脚本
+./flash_grokbot_v22.sh /dev/cu.usbmodem2101 AUTO            # 跳过确认
 ```
 
-整片镜像 `grokbot_waveshare_amoled216_v21.bin`（SHA256 `b98184bf95596b6a74977c46e425de2169e180dae07f96ca8ca0f6afc776353f`）可直烧 0x0（会清 NVS，适合全新板子）。
+整片镜像 `grokbot_waveshare_amoled216_v22.bin`（SHA256 `8ebb1200d013dc770c020909049fcc4c2745df1b5711728d5e9ac0c8e5259125`）可直烧 0x0（会清 NVS，适合全新板子）。
 
 ## 回滚
 
-`./flash_grokbot_v20.sh`（工作区内，保留 NVS）。`releases/` 保留 v6–v21（跳过未发布的 v19）全部镜像与分分区组件。
+`./flash_grokbot_v21.sh`（工作区内，保留 NVS）。`releases/` 保留 v6–v22（跳过未发布的 v19）全部镜像与分分区组件。
 
 ## 历史
 
+### v21 — 静态 UI 分层 / 只渲染动态内容
+
+角色图集从整帧 360×360 裁到内容 bbox 252×286（x=54,y=26），保留整帧 stride 与 data 偏移，视觉零变化。实机 A/B：首页 notifying present -55%、render -28%；decode 是主瓶颈且不受影响，整机 fps 提升有限。
+
 ### v20 — 四层运动环宠物页
 
-从四条属性条改为四层同心圆角矩形运动环（心情青 `#00E5FF` / 健康粉 `#FF5C8A` / 饱腹琥珀 `#FFC857` / 清洁绿 `#4ADE80`），无底轨道、未满圆头/满值闭合、等距圆角、环上无属性名；互动数值按对应环色显示，反馈字幕紧贴等级徽章下方。按钮 `76×56` 下移为中间角色留白。同期加入摇一摇头晕（完整播放 clip）、删除 BOOT 三击静音，并修复进页时的日志锁死锁与按键任务栈溢出。性能上把四环预光栅化为一张 ARGB8888 位图、再拆成上下左右四条边 image，减少透明层合成。
+四层同心圆角矩形运动环（心情青 / 健康粉 / 饱腹琥珀 / 清洁绿），无底轨道、未满圆头/满值闭合；互动数值按环色显示。加入摇一摇头晕（完整播放 clip）、删除 BOOT 三击静音，修复进页死锁与栈溢出。环预光栅化后拆成四条边 image 减少合成。
 
 ## 引用
 

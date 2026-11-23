@@ -77,6 +77,10 @@ private:
     std::atomic<int64_t> last_update_us_{0};   // esp_timer time of last decay
     std::atomic<int64_t> last_action_us_{0};   // last interaction for transient emotion
     std::atomic<int> last_action_{0};          // emotion id for transient action
+    // Per-event emotion passed to MarkAction (e.g. each Explore outcome has a
+    // distinct clip). SuggestEmotion's explore case uses this instead of a
+    // single hard-coded clip so different events look different.
+    std::atomic<const char*> last_mark_emotion_{nullptr};
     std::atomic<int64_t> last_pet_us_{0};      // for anti-spam petting
     std::atomic<int64_t> last_interact_us_{0}; // for idle antics / auto sleep
 };
