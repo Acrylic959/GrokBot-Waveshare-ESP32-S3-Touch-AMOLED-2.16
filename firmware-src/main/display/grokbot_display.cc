@@ -1216,6 +1216,11 @@ bool GrokbotDisplay::EnsurePlayer() {
             // buffer.  lv_image_set_src() invalidates the object's bounds, so a
             // smaller object means a smaller dirty rectangle, less software
             // blending and fewer bytes pushed over QSPI - with no pixel change.
+            // HARD REQUIREMENT: CONFIG_LV_DRAW_BUF_STRIDE_ALIGN must stay 1.
+            // Otherwise LVGL's bin decoder sees stride(720) != width-based
+            // stride(252*2=504) and rebuilds the buffer, breaking the crop.
+            // data_size MUST stay the full frame size: LVGL rejects a draw buf
+            // whose stride*h (720*286=205920) exceeds data_size.
             for (int i = 0; i < 2; ++i) {
                 image_descs_[i] = {};
                 image_descs_[i].header.magic = LV_IMAGE_HEADER_MAGIC;
