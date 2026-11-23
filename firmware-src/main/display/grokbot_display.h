@@ -70,6 +70,20 @@ private:
     const char* EffectiveAnimationName();
     int64_t NowUs() const;
 
+    // Every frame in the GrokBot atlas is drawn inside this fixed content box;
+    // everything outside it is black.  Displaying the character through a
+    // sub-region image descriptor cuts the per-frame invalidate/blit/SPI area
+    // to ~56% of the full 360x360 frame with zero visual change.
+    static constexpr int kGrokContentX0 = 54;
+    static constexpr int kGrokContentY0 = 26;
+    static constexpr int kGrokContentW = 252;
+    static constexpr int kGrokContentH = 286;
+    // Actual crop geometry used by the descriptors (clamped to the atlas).
+    int crop_x0_ = kGrokContentX0;
+    int crop_y0_ = kGrokContentY0;
+    int crop_w_ = kGrokContentW;
+    int crop_h_ = kGrokContentH;
+
     GrokBotPlayer player_;
     const uint8_t* atlas_data_ = nullptr;
     size_t atlas_size_ = 0;
@@ -87,6 +101,10 @@ private:
     size_t packed_size_ = 0;
     size_t image_size_ = 0;
     int write_buffer_ = 0;
+    // Set once under the display lock in PresentFrame() after the atlas frame
+    // size is known: fixes emoji_box_ to the full frame size and positions the
+    // (now cropped) character image at the content bbox origin.
+    bool frame_geometry_ready_ = false;
 
     bool reverse_ = false;
     bool rebuild_pending_ = false;

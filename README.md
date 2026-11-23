@@ -6,11 +6,13 @@
 
 > 本仓库是**移植与增强项目**，不是上述任一上游项目的官方仓库。所有原始代码的版权归各自作者所有，详见 [引用与致谢](#引用与致谢) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-> 想要一个直接可刷的固件镜像？去 [Releases](https://github.com/Acrylic959/grokbot-amoled216/releases/tag/v20) 下载 `grokbot_waveshare_amoled216_v20.bin`，或按下方「刷机」步骤用分分区镜像保留 Wi-Fi 配网。
+> 想要一个直接可刷的固件镜像？去 [Releases](https://github.com/Acrylic959/grokbot-amoled216/releases/tag/v21) 下载 `grokbot_waveshare_amoled216_v21.bin`，或按下方「刷机」步骤用分分区镜像保留 Wi-Fi 配网。
 
 ![宠物页 UI 预览](docs/images/pet_ui_v20_rings_preview_v3.png)
 
-*宠物页：四层同心圆角运动环 · 等级徽章 · 彩色数值反馈 · 底部四按钮（角色保持原色）*
+*宠物页：四层同心圆角运动环 · 等级徽章 · 彩色数值反馈 · 底部四按钮（角色保持原色）。v21 视觉与此图完全一致。*
+
+- **性能优化**（v21）：角色图集只渲染实际内容区域（252×286 / 360×360），每帧脏区、软件合成与送屏面积减少约 44%，界面样式与玩法不变。详见 [v21 发布说明](docs/RELEASE_NOTES.md)。
 
 ## 功能
 
@@ -131,7 +133,8 @@ idf.py build
 ├── firmware-src/                # 小智固件源码（基于官方 v2.6.0 + 全部 GrokBot 定制）
 │   └── main/boards/waveshare/esp32-s3-touch-amoled-2.16-grokbot/   # 本移植的板型代码
 ├── releases/                    # 预编译固件
-│   ├── grokbot_waveshare_amoled216_v20.bin  # v20 整片合并镜像（推荐）
+│   ├── grokbot_waveshare_amoled216_v21.bin  # v21 整片合并镜像（推荐）
+│   ├── grokbot_waveshare_amoled216_v20.bin  # v20 镜像（回滚用）
 │   ├── grokbot_waveshare_amoled216_v18.bin  # v18 镜像（回滚用）
 │   ├── grokbot_waveshare_amoled216_v17.bin  # v17 镜像（回滚用）
 │   ├── grokbot_waveshare_amoled216_v16.bin  # v16 镜像（回滚用）
@@ -152,7 +155,7 @@ idf.py build
 ├── docs/
 │   ├── port-changes.patch       # 相对上游 fork commit 的移植改动（v1–v7 主体）
 │   ├── BOARD.md                 # 板型说明与版本历史
-│   ├── RELEASE_NOTES.md         # v20 发布说明
+│   ├── RELEASE_NOTES.md         # v21 发布说明
 │   └── images/                  # 宠物页 UI 预览图
 ├── .github/workflows/release.yml # 自动还原二进制并发布 Release
 ├── INTRODUCTION.md              # 项目介绍（面向访客）

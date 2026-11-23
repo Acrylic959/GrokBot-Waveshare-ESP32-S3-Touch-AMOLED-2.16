@@ -1202,15 +1202,31 @@ bool GrokbotDisplay::EnsurePlayer() {
                 pair_lut_[i] = static_cast<uint32_t>(high) | (static_cast<uint32_t>(low) << 16);
             }
 
+            // Clamp the measured content bbox to this atlas frame.  The stock
+            // 360x360 atlas matches exactly; clamping only guards against a
+            // future/replaced asset with a smaller frame.
+            crop_x0_ = std::min(kGrokContentX0, frame_width_ - 1);
+            crop_y0_ = std::min(kGrokContentY0, frame_height_ - 1);
+            crop_w_ = std::min(kGrokContentW, frame_width_ - crop_x0_);
+            crop_h_ = std::min(kGrokContentH, frame_height_ - crop_y0_);
+            frame_geometry_ready_ = false;  // re-place the image under display lock
+
+            // Sub-region descriptors: expose only the character's content box,
+            // but keep the FULL frame stride and offset data into the very same
+            // buffer.  lv_image_set_src() invalidates the object's bounds, so a
+            // smaller object means a smaller dirty rectangle, less software
+            // blending and fewer bytes pushed over QSPI - with no pixel change.
             for (int i = 0; i < 2; ++i) {
                 image_descs_[i] = {};
                 image_descs_[i].header.magic = LV_IMAGE_HEADER_MAGIC;
                 image_descs_[i].header.cf = LV_COLOR_FORMAT_RGB565;
-                image_descs_[i].header.w = frame_width_;
-                image_descs_[i].header.h = frame_height_;
+                image_descs_[i].header.w = crop_w_;
+                image_descs_[i].header.h = crop_h_;
                 image_descs_[i].header.stride = frame_width_ * sizeof(uint16_t);
                 image_descs_[i].data_size = image_size_;
-                image_descs_[i].data = reinterpret_cast<const uint8_t*>(image_buffers_[i]);
+                image_descs_[i].data =
+                    reinterpret_cast<const uint8_t*>(image_buffers_[i]) +
+                    (static_cast<size_t>(crop_y0_) * frame_width_ + crop_x0_) * sizeof(uint16_t);
             }
         }
         ESP_LOGI(TAG, "Atlas ready: %dx%d, %d states, %d fps, packed=%u image=%u", frame_width_,
@@ -1283,6 +1299,19 @@ bool GrokbotDisplay::PresentFrame() {
     DisplayLockGuard lock(this);
     if (!lock) {
         return false;
+    }
+    if (!frame_geometry_ready_) {
+        // emoji_box_ stays the full frame size so the cropped character keeps
+        // exactly its original on-screen position; the image itself is moved
+        // to the content bbox origin.  Both must happen under the display lock
+        // because the animation task (core 0) owns this code path.
+        lv_obj_set_size(emoji_box_, frame_width_, frame_height_);
+        lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, 0);
+        // Use lv_obj_align (not lv_obj_set_pos): the base SetupUI centred the
+        // image, and set_pos alone would keep LV_ALIGN_CENTER and treat our
+        // coordinates as a centre offset instead of an absolute position.
+        lv_obj_align(emoji_image_, LV_ALIGN_TOP_LEFT, crop_x0_, crop_y0_);
+        frame_geometry_ready_ = true;
     }
     lv_image_set_src(emoji_image_, &image_descs_[presented]);
     lv_obj_remove_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
