@@ -43,16 +43,18 @@ public:
     void SetPetMode(bool active);
     void TogglePetMode();
     void TriggerPetAction(int action) { OnPetAction(action); }
+    // Called by the board motion task when a shake gesture is detected.
+    void RequestPetDizzy() { pet_dizzy_pending_.store(true); }
     bool IsPetModeActive() const { return pet_mode_active_.load(); }
 
 private:
     void InitializePetPanel();
     void RefreshPetPanelLocked();
+    void RasterizePetRingsLocked();
     void OnPetAction(int action);
     void NotePetInteraction();
     static void PetButtonEventCb(lv_event_t* event);
     static void PetPanelEventCb(lv_event_t* event);
-    void UpdatePetFeedbackLayout();
     static void RounderEventCb(lv_event_t* event);
     static void AnimationTaskEntry(void* arg);
     static void TeIsr(void* arg);
@@ -114,9 +116,22 @@ private:
     lv_obj_t* pet_feedback_ = nullptr;
     lv_obj_t* pet_feedback_prefix_ = nullptr;
     lv_obj_t* pet_feedback_values_[4] = {};
-    // Four concentric rounded-rectangle progress rings (Apple Watch style).
-    lv_obj_t* pet_ring_lines_[4] = {};
-    lv_point_precise_t pet_ring_points_[4][160] = {};
+    // Four concentric rounded-rectangle progress rings are pre-rasterized into
+    // one ARGB8888 bitmap and shown as a single lv_image. Redrawing four full
+    // screen vector lines every character frame was the main FPS killer.
+    lv_obj_t* pet_ring_image_ = nullptr;
+    lv_image_dsc_t pet_ring_dsc_ = {};
+    uint8_t* pet_ring_buffer_ = nullptr;
+    lv_point_precise_t pet_ring_points_[4][192] = {};
+    int pet_ring_last_values_[4] = {-1, -1, -1, -1};
+    // Rapid button taps keep the current action animation for a short window
+    // instead of rebuilding the whole clip on every tap.
+    std::atomic<int64_t> pet_anim_hold_until_us_{0};
+    std::atomic<int> pet_anim_hold_name_{0};
+    std::atomic<bool> pet_dizzy_pending_{false};
+    std::atomic<bool> pet_dizzy_armed_{false};
+    std::atomic<int64_t> pet_dizzy_arm_start_us_{0};
+    std::atomic<int64_t> pet_dizzy_until_us_{0};
     // Only 4 on-screen buttons: feed / play / clean / explore.
     lv_obj_t* pet_buttons_[4] = {};
     bool pet_saved_status_visible_ = true;

@@ -367,6 +367,11 @@ private:
     void AutoRotateTask() {
         int pending = -1;
         int stable = 0;
+        // Shake detection: compare consecutive accel samples. Only active in
+        // pet mode; the dizzy animation itself is driven by GrokbotDisplay.
+        Motion::AccelSample prev_shake;
+        bool has_prev_shake = false;
+        int64_t last_shake_ms = 0;
         while (true) {
             if (screen_locked_.load()) {
                 pending = -1;
@@ -377,6 +382,26 @@ private:
             Motion::AccelSample sample;
             if (Motion::ReadAccel(sample)) {
                 last_accel_ = sample;
+                // Shake works on the home screen AND the pet page.
+                if (display_ != nullptr) {
+                    if (has_prev_shake) {
+                        const int dx = std::abs(sample.x - prev_shake.x);
+                        const int dy = std::abs(sample.y - prev_shake.y);
+                        const int dz = std::abs(sample.z - prev_shake.z);
+                        const int score = dx + dy + dz;
+                        const int64_t now_ms = esp_timer_get_time() / 1000;
+                        if (score > SHAKE_DELTA_THRESHOLD_MG &&
+                            now_ms - last_shake_ms > SHAKE_COOLDOWN_MS) {
+                            last_shake_ms = now_ms;
+                            display_->RequestPetDizzy();
+                            ESP_LOGI(TAG, "Shake -> dizzy (score=%d)", score);
+                        }
+                    }
+                    prev_shake = sample;
+                    has_prev_shake = true;
+                } else {
+                    has_prev_shake = false;
+                }
                 const int target = ClassifyRotation(sample);
                 if (target == pending) {
                     ++stable;
@@ -518,9 +543,8 @@ private:
             SetScreenLocked(!screen_locked_.load());
         });
 
-        // BOOT (GPIO0): single -> chat/配网, triple -> mute, long -> lock.
-        // Pet mode toggle moved to Key3 so BOOT keeps only assistant actions.
-        boot_button_.OnMultipleClick([this]() { ToggleMute(); }, 3);
+        // BOOT (GPIO0): single -> chat/配网, long -> lock.
+        // Triple-click mute was removed; SYS_OUT remains the mute shortcut.
 
         // Key3 (GPIO18, schematic CHIP_PU): dedicated pet mode toggle.
         // Toggle on the physical PRESS edge instead of CLICK/LONG_PRESS.

@@ -69,4 +69,9 @@
 #define ROTATE_STABLE_SAMPLES 3
 #define ROTATE_AXIS_THRESHOLD_MG 450
 #define ROTATE_FLAT_Z_THRESHOLD_MG 780
+
+// Shake gesture -> pet dizzy animation. Sum of per-axis deltas between two
+// consecutive samples must exceed this to count as a shake.
+#define SHAKE_DELTA_THRESHOLD_MG 2600
+#define SHAKE_COOLDOWN_MS 2500
 #endif // _BOARD_CONFIG_H_

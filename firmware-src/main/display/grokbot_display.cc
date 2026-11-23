@@ -30,6 +30,21 @@ constexpr int kNormalFps = 30;
 constexpr int kAudioBusyFps = 15;
 constexpr int kPowerSaveFps = 10;
 constexpr uint32_t kPanelTeHz = 60;
+// Emotions PetState can suggest, indexed for the rapid-tap animation hold.
+constexpr const char* kPetActionAnims[] = {
+    "happy", "excited", "playful", "shy", "surprised", "sleeping", "waking",
+    "confused", "sad", "drowsy", "scared", "searching", "laughing", "idle",
+};
+constexpr int kPetActionAnimCount = sizeof(kPetActionAnims) / sizeof(kPetActionAnims[0]);
+int PetAnimIndex(const char* name) {
+    if (name == nullptr) return -1;
+    for (int i = 0; i < kPetActionAnimCount; ++i) {
+        if (strcmp(name, kPetActionAnims[i]) == 0) return i;
+    }
+    return -1;
+}
+constexpr int64_t kPetAnimHoldUs = 1200000LL;   // rapid taps reuse one animation
+constexpr int64_t kPetDizzyAnimUs = 5000000LL;  // shake -> dizzy for ~5 s
 
 const char* MapEmotion(const char* emotion) {
     if (emotion == nullptr) {
@@ -363,7 +378,7 @@ constexpr int64_t kPetAutoSleepUs = 60 * 1000000LL;
 // Four concentric rounded-rectangle rings. Corner radii decrease by the same
 // step as the insets so the gap stays equal on straight edges and corners.
 constexpr int kPetRingCount = 4;
-constexpr int kPetRingMaxPoints = 160;
+constexpr int kPetRingMaxPoints = 192;
 constexpr int kPetRingWidth = 10;
 const int kPetRingBounds[kPetRingCount][4] = {
     {16, 16, 464, 464}, {28, 28, 452, 452},
@@ -405,17 +420,21 @@ void BuildPetRingPoints(lv_point_precise_t* out, int* out_count, int ring, int v
             ++n;
         }
     };
+    constexpr float kStep = 16.0f;
     auto add_line = [&](float ax, float ay, float bx, float by) {
         const float dist = std::hypot(bx - ax, by - ay);
-        const int steps = std::max(1, static_cast<int>(dist / 14.0f));
+        const int steps = std::max(1, static_cast<int>(dist / kStep));
         for (int i = 0; i <= steps; ++i) {
             const float t = static_cast<float>(i) / steps;
             push(ax + (bx - ax) * t, ay + (by - ay) * t);
         }
     };
     auto add_arc = [&](float acx, float acy, float a0, float a1) {
-        const float span = std::fabs(a1 - a0);
-        const int steps = std::max(3, static_cast<int>(span * r / 14.0f));
+        // span is in DEGREES; convert to radians before multiplying by radius.
+        // Previously `span * r / step` produced ~160 steps for one 90-degree
+        // corner, exhausting the point budget before the rest of the ring.
+        const float arc_len = std::fabs(a1 - a0) * 3.14159265f / 180.0f * r;
+        const int steps = std::max(6, static_cast<int>(arc_len / kStep));
         for (int i = 0; i <= steps; ++i) {
             const float a = (a0 + (a1 - a0) * i / steps) * 3.14159265f / 180.0f;
             push(acx + r * std::cos(a), acy + r * std::sin(a));
@@ -525,26 +544,37 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_label_set_text(pet_title_, "Lv.1 · 体型 宝宝");
     lv_obj_set_style_text_color(pet_title_, lv_color_white(), 0);
     lv_obj_set_style_text_align(pet_title_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 66);
+    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 62);
     lv_obj_set_style_bg_opa(pet_title_, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(pet_title_, 0, 0);
     lv_obj_set_style_radius(pet_title_, 0, 0);
     lv_obj_set_style_pad_all(pet_title_, 6, 0);
 
     // ---- Four concentric rounded-rectangle progress rings -----------------
-    // Apple-Watch style: no dark track, coloured progress only, round caps,
-    // and equal gaps on both straight edges and corners.
-    for (int i = 0; i < kPetRingCount; ++i) {
-        lv_obj_t* line = lv_line_create(pet_panel_);
-        lv_obj_set_pos(line, 0, 0);
-        lv_obj_set_size(line, LV_HOR_RES, LV_VER_RES);
-        lv_obj_set_style_line_width(line, kPetRingWidth, 0);
-        lv_obj_set_style_line_rounded(line, true, 0);
-        lv_obj_set_style_line_color(line, lv_color_hex(kPetRingColors[i]), 0);
-        lv_obj_clear_flag(line, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(line, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_flag(line, LV_OBJ_FLAG_HIDDEN);
-        pet_ring_lines_[i] = line;
+    // Pre-rasterized into one ARGB8888 bitmap (Apple-Watch style: no dark
+    // track, coloured progress only, round caps, equal gaps).  A single image
+    // blit per frame replaces four full-screen vector polyline redraws.
+    const size_t ring_bytes = static_cast<size_t>(LV_HOR_RES) * LV_VER_RES * 4;
+    pet_ring_buffer_ = static_cast<uint8_t*>(heap_caps_malloc(ring_bytes, MALLOC_CAP_SPIRAM));
+    if (pet_ring_buffer_ == nullptr) {
+        pet_ring_buffer_ = static_cast<uint8_t*>(heap_caps_malloc(ring_bytes, MALLOC_CAP_8BIT));
+    }
+    if (pet_ring_buffer_ != nullptr) {
+        memset(pet_ring_buffer_, 0, ring_bytes);
+        pet_ring_dsc_ = {};
+        pet_ring_dsc_.header.magic = LV_IMAGE_HEADER_MAGIC;
+        pet_ring_dsc_.header.cf = LV_COLOR_FORMAT_ARGB8888;
+        pet_ring_dsc_.header.w = LV_HOR_RES;
+        pet_ring_dsc_.header.h = LV_VER_RES;
+        pet_ring_dsc_.header.stride = LV_HOR_RES * 4;
+        pet_ring_dsc_.data_size = ring_bytes;
+        pet_ring_dsc_.data = pet_ring_buffer_;
+        pet_ring_image_ = lv_image_create(pet_panel_);
+        lv_obj_set_pos(pet_ring_image_, 0, 0);
+        lv_obj_set_size(pet_ring_image_, LV_HOR_RES, LV_VER_RES);
+        lv_image_set_src(pet_ring_image_, &pet_ring_dsc_);
+        lv_obj_clear_flag(pet_ring_image_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(pet_ring_image_, LV_OBJ_FLAG_CLICKABLE);
     }
 
     // ---- Assistant subtitle directly under the level badge ----------------
@@ -553,17 +583,22 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_obj_set_style_text_color(pet_subtitle_, lv_color_white(), 0);
     lv_obj_set_style_text_align(pet_subtitle_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(pet_subtitle_, LV_LABEL_LONG_WRAP);
-    lv_obj_align(pet_subtitle_, LV_ALIGN_TOP_MID, 0, 112);
+    lv_obj_align(pet_subtitle_, LV_ALIGN_TOP_MID, 0, 88);
     lv_label_set_text(pet_subtitle_, "");
     lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
 
     // Interaction feedback: white prefix + four coloured delta labels.
     pet_feedback_ = lv_obj_create(pet_panel_);
-    lv_obj_set_size(pet_feedback_, 320, 26);
-    lv_obj_align(pet_feedback_, LV_ALIGN_TOP_MID, 0, 112);
+    lv_obj_set_width(pet_feedback_, 440);
+    lv_obj_set_height(pet_feedback_, LV_SIZE_CONTENT);
+    lv_obj_align(pet_feedback_, LV_ALIGN_TOP_MID, 0, 88);
     lv_obj_set_style_bg_opa(pet_feedback_, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(pet_feedback_, 0, 0);
     lv_obj_set_style_pad_all(pet_feedback_, 0, 0);
+    lv_obj_set_style_pad_column(pet_feedback_, 8, 0);
+    lv_obj_set_style_pad_row(pet_feedback_, 2, 0);
+    lv_obj_set_flex_flow(pet_feedback_, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(pet_feedback_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scrollbar_mode(pet_feedback_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(pet_feedback_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(pet_feedback_, LV_OBJ_FLAG_CLICKABLE);
@@ -581,14 +616,13 @@ void GrokbotDisplay::InitializePetPanel() {
         lv_obj_add_flag(value, LV_OBJ_FLAG_HIDDEN);
         pet_feedback_values_[i] = value;
     }
-    UpdatePetFeedbackLayout();
 
     // ---- Four-action menu: monochrome buttons, 4px gaps --------------------
     static const char* kActions[4] = {"投喂", "玩耍", "清洁", "探险"};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t* button = lv_btn_create(pet_panel_);
         lv_obj_set_size(button, 76, 56);
-        lv_obj_align(button, LV_ALIGN_TOP_LEFT, 76 + i * 84, 348);
+        lv_obj_align(button, LV_ALIGN_TOP_LEFT, 72 + i * 84, 352);
         lv_obj_set_style_radius(button, 14, 0);
         lv_obj_set_style_bg_color(button, lv_color_hex(0x121212), 0);
         lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
@@ -607,6 +641,68 @@ void GrokbotDisplay::InitializePetPanel() {
     ESP_LOGI(TAG, "Pet panel ready (4 concentric rounded rings, coloured deltas, subtitle under level)");
 }
 
+// Rasterize the four progress rings into a single ARGB8888 bitmap. The bitmap
+// is redrawn only when a stat changes, so the per-frame character blit no longer
+// has to re-stroke four ~130-point vector polylines.
+void GrokbotDisplay::RasterizePetRingsLocked() {
+    if (pet_ring_buffer_ == nullptr) {
+        return;
+    }
+    const int w = LV_HOR_RES;
+    const int h = LV_VER_RES;
+    memset(pet_ring_buffer_, 0, static_cast<size_t>(w) * h * 4);
+
+    auto& pet = PetState::GetInstance();
+    const int values[6] = {pet.mood(), pet.satiety(), pet.energy(),
+                           pet.health(), pet.hygiene(), pet.fun()};
+    const float radius = kPetRingWidth / 2.0f;
+    const int ir = static_cast<int>(radius);
+
+    // Plot a filled disc of the ring colour (8-bit alpha), used for round caps
+    // and to thicken each sampled segment into a stroke.
+    auto disc = [&](float px, float py, uint32_t argb) {
+        const int cx = static_cast<int>(px);
+        const int cy = static_cast<int>(py);
+        for (int yy = cy - ir; yy <= cy + ir; ++yy) {
+            if (yy < 0 || yy >= h) continue;
+            for (int xx = cx - ir; xx <= cx + ir; ++xx) {
+                if (xx < 0 || xx >= w) continue;
+                const float dx = xx - px;
+                const float dy = yy - py;
+                if (dx * dx + dy * dy > radius * radius) continue;
+                auto* dst = reinterpret_cast<uint32_t*>(pet_ring_buffer_) +
+                            static_cast<size_t>(yy) * w + xx;
+                *dst = argb;  // opaque ring colour, no blending needed
+            }
+        }
+    };
+
+    for (int i = 0; i < kPetRingCount; ++i) {
+        const int value = values[kPetStatStateIndex[i]];
+        int count = 0;
+        BuildPetRingPoints(pet_ring_points_[i], &count, i, value);
+        if (count < 2) continue;
+        const uint32_t rgb = kPetRingColors[i];
+        // kPetRingColors are 0xRRGGBB; LVGL ARGB8888 is 0xAARRGGBB in uint32
+        // (stored B,G,R,A on little-endian). Previous swap made cyan -> yellow.
+        const uint32_t argb = 0xFF000000u | rgb;
+        for (int k = 0; k + 1 < count; ++k) {
+            const float ax = pet_ring_points_[i][k].x;
+            const float ay = pet_ring_points_[i][k].y;
+            const float bx = pet_ring_points_[i][k + 1].x;
+            const float by = pet_ring_points_[i][k + 1].y;
+            const int steps = std::max(1, static_cast<int>(std::hypot(bx - ax, by - ay)));
+            for (int s = 0; s <= steps; ++s) {
+                const float t = static_cast<float>(s) / steps;
+                disc(ax + (bx - ax) * t, ay + (by - ay) * t, argb);
+            }
+        }
+    }
+    if (pet_ring_image_ != nullptr) {
+        lv_obj_invalidate(pet_ring_image_);
+    }
+}
+
 void GrokbotDisplay::RefreshPetPanelLocked() {
     if (pet_panel_ == nullptr || !pet_mode_active_.load()) {
         return;
@@ -614,54 +710,22 @@ void GrokbotDisplay::RefreshPetPanelLocked() {
     auto& pet = PetState::GetInstance();
     const int values[6] = {pet.mood(), pet.satiety(), pet.energy(),
                            pet.health(), pet.hygiene(), pet.fun()};
+    bool ring_changed = false;
     for (int i = 0; i < kPetRingCount; ++i) {
         const int value = values[kPetStatStateIndex[i]];
-        int count = 0;
-        BuildPetRingPoints(pet_ring_points_[i], &count, i, value);
-        lv_obj_t* line = pet_ring_lines_[i];
-        if (line == nullptr) {
-            continue;
+        if (value != pet_ring_last_values_[i]) {
+            pet_ring_last_values_[i] = value;
+            ring_changed = true;
         }
-        if (count >= 2) {
-            lv_obj_set_style_line_rounded(line, value < 99, 0);
-            lv_line_set_points(line, pet_ring_points_[i], count);
-            lv_obj_remove_flag(line, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(line, LV_OBJ_FLAG_HIDDEN);
-        }
+    }
+    if (ring_changed) {
+        RasterizePetRingsLocked();
     }
     if (pet_title_ != nullptr) {
         char buffer[64];
         snprintf(buffer, sizeof(buffer), "Lv.%d · 体型 %s",
                  pet.level(), pet.stageName());
         lv_label_set_text(pet_title_, buffer);
-    }
-}
-
-void GrokbotDisplay::UpdatePetFeedbackLayout() {
-    if (pet_feedback_ == nullptr || pet_feedback_prefix_ == nullptr) {
-        return;
-    }
-    const int gap = 8;
-    int total = lv_obj_get_width(pet_feedback_prefix_);
-    int widths[kPetRingCount] = {};
-    for (int i = 0; i < kPetRingCount; ++i) {
-        if (pet_feedback_values_[i] != nullptr &&
-            !lv_obj_has_flag(pet_feedback_values_[i], LV_OBJ_FLAG_HIDDEN)) {
-            widths[i] = lv_obj_get_width(pet_feedback_values_[i]);
-            total += widths[i] + gap;
-        }
-    }
-    int x = (lv_obj_get_width(pet_feedback_) - total) / 2;
-    if (x < 0) x = 0;
-    lv_obj_set_pos(pet_feedback_prefix_, x, 0);
-    x += lv_obj_get_width(pet_feedback_prefix_) + gap;
-    for (int i = 0; i < kPetRingCount; ++i) {
-        if (widths[i] == 0 || pet_feedback_values_[i] == nullptr) {
-            continue;
-        }
-        lv_obj_set_pos(pet_feedback_values_[i], x, 0);
-        x += widths[i] + gap;
     }
 }
 
@@ -677,7 +741,6 @@ void GrokbotDisplay::ShowPetFeedbackText(const char* text) {
         lv_label_set_text(pet_feedback_values_[i], "");
         lv_obj_add_flag(pet_feedback_values_[i], LV_OBJ_FLAG_HIDDEN);
     }
-    UpdatePetFeedbackLayout();
     lv_obj_remove_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
     if (pet_subtitle_ != nullptr) {
         lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
@@ -704,7 +767,6 @@ void GrokbotDisplay::ShowPetFeedbackDeltas(const char* prefix, const int delta[k
             lv_obj_remove_flag(label, LV_OBJ_FLAG_HIDDEN);
         }
     }
-    UpdatePetFeedbackLayout();
     lv_obj_remove_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
     if (pet_subtitle_ != nullptr) {
         lv_obj_add_flag(pet_subtitle_, LV_OBJ_FLAG_HIDDEN);
@@ -744,6 +806,15 @@ void GrokbotDisplay::OnPetAction(int action) {
     int delta[kPetRingCount] = {};
     for (int i = 0; i < kPetRingCount; ++i) {
         delta[i] = after[i] - before[i];
+    }
+    // Rapid taps: hold the first action's animation for a short window so the
+    // clip is not rebuilt on every tap (a full rebuild decodes the whole clip
+    // and was the main cause of the frame-rate drop while tapping).
+    const char* action_emotion = pet.SuggestEmotion();
+    const int action_index = PetAnimIndex(action_emotion);
+    if (action_index >= 0 && NowUs() >= pet_dizzy_until_us_.load()) {
+        pet_anim_hold_name_.store(action_index);
+        pet_anim_hold_until_us_.store(NowUs() + kPetAnimHoldUs);
     }
     DisplayLockGuard lock(this);
     if (lock) {
@@ -949,7 +1020,26 @@ void GrokbotDisplay::NotePetInteraction() {
 
 const char* GrokbotDisplay::EffectiveAnimationName() {
     const int64_t notification_until = notification_until_us_.load();
-    const int64_t now = NowUs();
+    int64_t now = NowUs();
+    // Shake gesture works on BOTH the home screen and the pet page. It has
+    // top priority and is not interrupted by status/emotion/action changes.
+    if (pet_dizzy_pending_.exchange(false)) {
+        pet_dizzy_until_us_.store(0);
+        pet_dizzy_armed_.store(true);
+        pet_dizzy_arm_start_us_.store(now);
+        ESP_LOGI(TAG, "Shake detected -> dizzy (play full clip)");
+    }
+    if (pet_dizzy_armed_.load()) {
+        // Fallback: if the clip switch never happens, don't stick forever.
+        if (now - pet_dizzy_arm_start_us_.load() > 1000000LL) {
+            pet_dizzy_armed_.store(false);
+            pet_dizzy_until_us_.store(now + kPetDizzyAnimUs);
+        }
+        return "confused";
+    }
+    if (now < pet_dizzy_until_us_.load()) {
+        return "confused";
+    }
     if (notification_until > now) {
         return "notifying";
     }
@@ -962,6 +1052,12 @@ const char* GrokbotDisplay::EffectiveAnimationName() {
     // cleaning, etc.).  This is what makes the buttons visibly "do something"
     // instead of only printing a line of text.
     if (pet_mode_active_.load()) {
+        const int held = pet_anim_hold_name_.load();
+        if (held >= 0 && held < kPetActionAnimCount &&
+            now < pet_anim_hold_until_us_.load()) {
+            return kPetActionAnims[held];
+        }
+        pet_anim_hold_name_.store(-1);
         return PetState::GetInstance().SuggestEmotion();
     }
 
@@ -1280,6 +1376,20 @@ void GrokbotDisplay::AnimationTask() {
         }
 
         const char* effective = EffectiveAnimationName();
+        // Time the dizzy priority window to the confused clip's real length
+        // (ping-pong forward+back) instead of a fixed duration, so it always
+        // plays from start to finish before switching back.
+        if (pet_dizzy_armed_.load() && player_.selected_name() != nullptr &&
+            strcmp(player_.selected_name(), "confused") == 0) {
+            const int frames = std::max(1, player_.selected_frame_count());
+            const int clip_fps = std::max(1, player_.fps());
+            const int64_t clip_us =
+                (static_cast<int64_t>(frames) * 2 + 2) * 1000000LL / clip_fps;
+            pet_dizzy_until_us_.store(NowUs() + clip_us);
+            pet_dizzy_armed_.store(false);
+            ESP_LOGI(TAG, "Dizzy full clip: %d frames @ %d fps -> %lld ms",
+                     frames, clip_fps, static_cast<long long>(clip_us / 1000));
+        }
         int fps = std::max(1, target_fps_.load());
         // "listening" / "streaming" are the mapped states for LISTENING / SPEAKING.
         // "notifying" accompanies TTS playback. Throttle hard so the audio tasks
