@@ -107,7 +107,22 @@ SOFTWARE.
 
 ---
 
-## 6. 框架与组件
+## 6. 电子宠物玩法参考（v11 完整养成系统）
+
+v11 的完整养成系统在状态维度与互动机制上参考了多个 ESP32 桌面宠物 / 电子宠物开源项目。本项目未复制其代码或美术资源，仅借鉴玩法设计思路（状态衰减、离线恢复、成长阶段、成就与探险事件），实现为本项目自有代码。
+
+| 项目 | 仓库 | 参考点 | 许可证 |
+| --- | --- | --- | --- |
+| DigiCat | https://github.com/ai-zerolab/DigiCat | ESP32 桌面宠物；心情/体力等状态衰减与互动反馈的设计思路 | 按其仓库声明 |
+| ESP32-TamaPetchi | https://github.com/lucagl83/ESP32-TamaPetchi | 经典拓麻歌子式养成循环；喂食/玩耍/清洁/睡眠分区互动 | 按其仓库声明 |
+| ESP32-C6 Desk Pet | https://github.com/WaveshareTeam/ESP32-C6-Desk-Pet | 微雪桌面宠物；多状态表情驱动与待机小动作 | 按其仓库声明 |
+| 小鲸（鲸鱼娘桌面宠物） | https://github.com/NyaaPangea/nga-plugins 等相关社区项目 | 桌面宠物亲密度/成长阶段与成就解锁机制 | 按其仓库声明 |
+
+本项目宠物实现位于 `firmware-src/main/display/pet_state.cc/.h`，六维状态、等级/成长、成就位掩码、抚摸防刷分、永不死亡机制均为 v11 新写，不依赖上述项目的任何源码。
+
+---
+
+## 7. 框架与组件
 
 | 组件 | 仓库 | 许可证 | 用途 |
 | --- | --- | --- | --- |
@@ -122,7 +137,7 @@ SOFTWARE.
 
 ---
 
-## 7. 硬件
+## 8. 硬件
 
 - **Waveshare ESP32-S3-Touch-AMOLED-2.16**（https://www.waveshare.com/）：板型硬件设计与示例参考。本项目不复制其专有代码，硬件寄存器配置参考其公开的示例与数据手册。
 - **M5Stack StopWatch / C152**：GrokBot 动画原目标硬件，本项目为其动画在另一板型上的移植。
