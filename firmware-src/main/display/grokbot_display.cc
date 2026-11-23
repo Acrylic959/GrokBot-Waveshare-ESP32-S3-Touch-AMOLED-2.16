@@ -355,6 +355,10 @@ constexpr const char* kPetStatLabels[4] = {"心情", "健康", "饱腹", "清洁
 // PetState stores six stats; the pet screen deliberately shows only these four.
 constexpr int kPetStatStateIndex[4] = {0, 3, 1, 4};  // mood, health, satiety, hygiene
 constexpr int kPetFadeStep = 26;  // ~10 frames at 30 FPS => ~330 ms fade
+// Button index -> PetState action id. 抚摸 (2) and 睡觉 (5) have no button:
+// petting is a tap on the character, sleeping is idle-triggered after 60 s.
+constexpr int kPetButtonActionId[4] = {0, 1, 3, 4};
+constexpr int64_t kPetAutoSleepUs = 60 * 1000000LL;
 }  // namespace
 
 void GrokbotDisplay::PetButtonEventCb(lv_event_t* event) {
@@ -362,24 +366,43 @@ void GrokbotDisplay::PetButtonEventCb(lv_event_t* event) {
         return;
     }
     auto* display = static_cast<GrokbotDisplay*>(lv_event_get_user_data(event));
-    const intptr_t raw = reinterpret_cast<intptr_t>(lv_event_get_param(event));
-    // LVGL passes no useful param for CLICKED; the action index is stored in
-    // each button's user_data instead (see InitializePetPanel).
-    (void)raw;
     if (display == nullptr) {
         return;
     }
     lv_obj_t* target = lv_event_get_target_obj(event);
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 4; ++i) {
         lv_obj_t* candidate = target;
         while (candidate != nullptr && candidate != display->pet_buttons_[i]) {
             candidate = lv_obj_get_parent(candidate);
         }
         if (candidate == display->pet_buttons_[i]) {
-            display->OnPetAction(i);
+            display->OnPetAction(kPetButtonActionId[i]);
             return;
         }
     }
+}
+
+void GrokbotDisplay::PetPanelEventCb(lv_event_t* event) {
+    if (event == nullptr || lv_event_get_code(event) != LV_EVENT_CLICKED) {
+        return;
+    }
+    auto* display = static_cast<GrokbotDisplay*>(lv_event_get_user_data(event));
+    if (display == nullptr || !display->pet_mode_active_.load()) {
+        return;
+    }
+    lv_indev_t* indev = lv_event_get_indev(event);
+    if (indev == nullptr) {
+        return;
+    }
+    lv_point_t point = {0, 0};
+    lv_indev_get_point(indev, &point);
+    // Tap the character area (inside the ring, above the button row) to pet.
+    // Button clicks target the buttons themselves and never reach this panel.
+    if (point.x < 72 || point.x > 408 || point.y < 96 || point.y > 340) {
+        return;
+    }
+    ESP_LOGI(TAG, "Pet tap at (%d,%d) -> caress", point.x, point.y);
+    display->OnPetAction(2);  // Pet() -> playful animation
 }
 
 void GrokbotDisplay::InitializePetPanel() {
@@ -396,35 +419,38 @@ void GrokbotDisplay::InitializePetPanel() {
     lv_obj_set_style_pad_all(pet_panel_, 0, 0);
     lv_obj_set_scrollbar_mode(pet_panel_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(pet_panel_, LV_OBJ_FLAG_SCROLLABLE);
-    // Faded in/out by the animation task; never intercept clicks in home view.
+    // Clicking the empty middle of the panel means "pet the character".
+    lv_obj_add_flag(pet_panel_, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(pet_panel_, PetPanelEventCb, LV_EVENT_CLICKED, this);
+    // Faded in/out by the animation task; hidden = outside hit-testing.
     lv_obj_set_style_opa(pet_panel_, LV_OPA_TRANSP, 0);
     lv_obj_add_flag(pet_panel_, LV_OBJ_FLAG_HIDDEN);
 
-    // ---- Top badge: LEVEL + BODY TYPE only (no name, no bond count) --------
+    // ---- Top badge: LEVEL + BODY TYPE only ---------------------------------
     pet_title_ = lv_label_create(pet_panel_);
     lv_obj_set_width(pet_title_, 180);
     lv_label_set_text(pet_title_, "Lv.1 · 体型 宝宝");
     lv_obj_set_style_text_color(pet_title_, lv_color_hex(0xbfe9ff), 0);
     lv_obj_set_style_text_align(pet_title_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 56);
+    lv_obj_align(pet_title_, LV_ALIGN_TOP_MID, 0, 44);
     lv_obj_set_style_bg_color(pet_title_, lv_color_hex(0x1b2b4a), 0);
     lv_obj_set_style_bg_opa(pet_title_, LV_OPA_80, 0);
     lv_obj_set_style_radius(pet_title_, 14, 0);
     lv_obj_set_style_pad_all(pet_title_, 6, 0);
 
     // ---- Four edge bars forming one complete status ring -------------------
-    // mood = top, health = right, satiety = bottom, clean = left.
-    // All bars stay on the outer frame so the character's face/body are clear.
+    // Pushed close to the 480x480 edges (v15): x=24/432, y=18/448.
+    // mood=top, health=right, satiety=bottom, clean=left.
     const lv_color_t stat_colors[4] = {
         lv_color_hex(0x6ad3ff),  // mood
         lv_color_hex(0xff8fa3),  // health
         lv_color_hex(0xffd166),  // satiety
         lv_color_hex(0x8be28b),  // clean
     };
-    const int bar_x[4] = {60, 408, 60, 60};
-    const int bar_y[4] = {96, 102, 438, 102};
-    const int bar_w[4] = {360, 12, 360, 12};
-    const int bar_h[4] = {12, 330, 12, 330};
+    const int bar_x[4] = {24, 432, 24, 24};
+    const int bar_y[4] = {18, 32, 448, 32};
+    const int bar_w[4] = {432, 24, 432, 24};
+    const int bar_h[4] = {14, 416, 14, 416};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t* bar = lv_bar_create(pet_panel_);
         lv_obj_set_size(bar, bar_w[i], bar_h[i]);
@@ -437,59 +463,67 @@ void GrokbotDisplay::InitializePetPanel() {
         lv_obj_set_style_bg_color(bar, lv_color_hex(0x24304d), 0);
         lv_obj_set_style_bg_opa(bar, LV_OPA_80, 0);
         lv_obj_set_style_bg_color(bar, stat_colors[i], LV_PART_INDICATOR);
-        lv_obj_set_style_radius(bar, 6, 0);
+        lv_obj_set_style_radius(bar, 7, 0);
         lv_obj_set_style_pad_all(bar, 0, 0);
         lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
+        // Status name now lives INSIDE its own bar.  A small dark pill keeps
+        // the label readable over any indicator fill level.
+        lv_obj_t* name = lv_label_create(bar);
+        lv_label_set_text(name, (i == 1) ? "健\n康" : (i == 3) ? "清\n洁" : kPetStatLabels[i]);
+        lv_obj_set_style_text_color(name, lv_color_white(), 0);
+        lv_obj_set_style_bg_color(name, lv_color_hex(0x0b1020), 0);
+        lv_obj_set_style_bg_opa(name, LV_OPA_70, 0);
+        lv_obj_set_style_radius(name, 4, 0);
+        lv_obj_set_style_pad_left(name, 5, 0);
+        lv_obj_set_style_pad_right(name, 5, 0);
+        lv_obj_set_style_pad_top(name, 1, 0);
+        lv_obj_set_style_pad_bottom(name, 1, 0);
+        if (i == 1 || i == 3) {
+            lv_obj_set_width(name, 20);
+            lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_align(name, LV_ALIGN_BOTTOM_MID, 0, -10);
+        } else {
+            lv_obj_align(name, LV_ALIGN_LEFT_MID, 8, 0);
+        }
         pet_bars_[i] = bar;
     }
 
-    // Small corner caps make the four straight bars read as one closed ring.
-    const int cap_x[4] = {60, 408, 60, 408};
-    const int cap_y[4] = {96, 96, 438, 438};
+    // Corner caps make the four bars read as one closed ring.
+    const int cap_x[4] = {24, 432, 24, 432};
+    const int cap_y[4] = {18, 18, 448, 448};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t* cap = lv_obj_create(pet_panel_);
-        lv_obj_set_size(cap, 12, 12);
+        lv_obj_set_size(cap, 14, 14);
         lv_obj_align(cap, LV_ALIGN_TOP_LEFT, cap_x[i], cap_y[i]);
         lv_obj_set_style_bg_color(cap, lv_color_hex(0x9bd8ff), 0);
         lv_obj_set_style_bg_opa(cap, LV_OPA_70, 0);
         lv_obj_set_style_border_width(cap, 0, 0);
-        lv_obj_set_style_radius(cap, 6, 0);
+        lv_obj_set_style_radius(cap, 7, 0);
         lv_obj_clear_flag(cap, LV_OBJ_FLAG_SCROLLABLE);
-    }
-
-    // Labels sit just inside the ring, one per side.
-    const int label_x[4] = {72, 372, 372, 72};
-    const int label_y[4] = {112, 112, 418, 240};
-    for (int i = 0; i < 4; ++i) {
-        lv_obj_t* label = lv_label_create(pet_panel_);
-        lv_label_set_text(label, kPetStatLabels[i]);
-        lv_obj_set_style_text_color(label, stat_colors[i], 0);
-        lv_obj_align(label, LV_ALIGN_TOP_LEFT, label_x[i], label_y[i]);
     }
 
     pet_feedback_ = lv_label_create(pet_panel_);
     lv_obj_set_width(pet_feedback_, 280);
     lv_obj_set_style_text_color(pet_feedback_, lv_color_hex(0xffe08a), 0);
     lv_obj_set_style_text_align(pet_feedback_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(pet_feedback_, LV_ALIGN_TOP_MID, 0, 286);
+    lv_obj_align(pet_feedback_, LV_ALIGN_TOP_MID, 0, 310);
     lv_label_set_text(pet_feedback_, "");
     lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
 
-    // ---- Pokémon-style action menu: 3 x 2 rounded buttons, bottom centre ----
-    // 84x52 with 12px gaps => total 276x116, safely inside the round corners.
-    static const char* kActions[6] = {"投喂", "玩耍", "抚摸", "清洁", "探险", "睡觉"};
-    const lv_color_t button_border[6] = {
-        lv_color_hex(0x6ad3ff), lv_color_hex(0xffd166), lv_color_hex(0xff9ec7),
-        lv_color_hex(0x8be28b), lv_color_hex(0xb39cff), lv_color_hex(0x9fb3c8),
+    // ---- Four-action menu: one row of big buttons, Pokémon battle style ----
+    // 投喂 / 玩耍 / 清洁 / 探险. 抚摸 is a tap on the character; 睡觉 is
+    // triggered automatically after 60 s without interaction in pet mode.
+    static const char* kActions[4] = {"投喂", "玩耍", "清洁", "探险"};
+    const lv_color_t button_border[4] = {
+        lv_color_hex(0x6ad3ff), lv_color_hex(0xffd166),
+        lv_color_hex(0x8be28b), lv_color_hex(0xb39cff),
     };
-    for (int i = 0; i < 6; ++i) {
-        const int col = i % 3;
-        const int row = i / 3;
+    for (int i = 0; i < 4; ++i) {
         lv_obj_t* button = lv_btn_create(pet_panel_);
-        lv_obj_set_size(button, 84, 52);
-        lv_obj_align(button, LV_ALIGN_TOP_LEFT,
-                     102 + col * 96, 312 + row * 64);
-        lv_obj_set_style_radius(button, 14, 0);
+        lv_obj_set_size(button, 88, 64);
+        lv_obj_align(button, LV_ALIGN_TOP_LEFT, 49 + i * 98, 364);
+        lv_obj_set_style_radius(button, 16, 0);
         lv_obj_set_style_bg_color(button, lv_color_hex(0x1d2b49), 0);
         lv_obj_set_style_bg_opa(button, LV_OPA_80, 0);
         lv_obj_set_style_border_width(button, 2, 0);
@@ -504,7 +538,7 @@ void GrokbotDisplay::InitializePetPanel() {
         pet_buttons_[i] = button;
     }
 
-    ESP_LOGI(TAG, "Pet panel ready (Lv+body badge, 4 edge bars, 6 action buttons)");
+    ESP_LOGI(TAG, "Pet panel ready (inline stat labels, 4 buttons, tap-to-pet, auto-sleep)");
 }
 
 void GrokbotDisplay::UpdatePetPanelFade() {
@@ -562,7 +596,13 @@ void GrokbotDisplay::OnPetAction(int action) {
     if (action < 0 || action > 5) {
         return;
     }
+    NotePetInteraction();
     auto& pet = PetState::GetInstance();
+    // Any explicit interaction wakes a sleeping pet first (except the sleep
+    // toggle itself), so a tap/button never just says "it is asleep".
+    if (action != 5 && pet.sleeping()) {
+        ESP_LOGI(TAG, "Auto wake before action %d: %s", action, pet.Wake());
+    }
     const char* result = nullptr;
     switch (action) {
         case 0: result = pet.Feed(); break;
@@ -573,8 +613,9 @@ void GrokbotDisplay::OnPetAction(int action) {
         case 5: result = pet.sleeping() ? pet.Wake() : pet.Sleep(); break;
         default: break;
     }
-    ESP_LOGI(TAG, "Pet action %d -> %s | %s", action, result != nullptr ? result : "(none)",
-             pet.Describe().c_str());
+    ESP_LOGI(TAG, "Pet action %d -> %s | %s | Animation -> %s", action,
+             result != nullptr ? result : "(none)", pet.Describe().c_str(),
+             pet.SuggestEmotion());
 
     // Feedback stays INSIDE the pet panel.  ShowNotification() is deliberately
     // avoided: it used to force EffectiveAnimationName() to "notifying" for
@@ -630,10 +671,12 @@ void GrokbotDisplay::SetPetMode(bool active) {
             pet.Wake();
             ESP_LOGI(TAG, "Pet was asleep -> auto wake on entering pet mode");
         }
+        NotePetInteraction();  // start the 60-second idle-to-sleep timer
         RefreshPetPanelLocked();
         ESP_LOGI(TAG, "Pet mode ON (overlay fade-in, character stays live)");
     } else {
         pet_fade_in_.store(false);
+        pet_last_interaction_us_.store(0);
         if (pet_feedback_ != nullptr) {
             lv_obj_add_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
         }
@@ -707,6 +750,10 @@ void GrokbotDisplay::SetScreenLocked(bool locked) {
 }
 
 int64_t GrokbotDisplay::NowUs() const { return esp_timer_get_time(); }
+
+void GrokbotDisplay::NotePetInteraction() {
+    pet_last_interaction_us_.store(NowUs());
+}
 
 const char* GrokbotDisplay::EffectiveAnimationName() {
     const int64_t notification_until = notification_until_us_.load();
@@ -992,9 +1039,26 @@ void GrokbotDisplay::AnimationTask() {
         const int64_t ui_now = NowUs();
         if (pet_mode_active_.load() && ui_now - last_pet_ui_us > 1000000LL) {
             last_pet_ui_us = ui_now;
+            auto& pet = PetState::GetInstance();
+            bool just_fell_asleep = false;
+            // No touch/button for 60 s in pet mode -> sleep with its own
+            // "sleeping" animation (SuggestEmotion() returns sleeping).
+            if (!pet.sleeping() && pet_last_interaction_us_.load() > 0 &&
+                ui_now - pet_last_interaction_us_.load() > kPetAutoSleepUs) {
+                const char* result = pet.Sleep();
+                pet_last_interaction_us_.store(ui_now);
+                just_fell_asleep = true;
+                ESP_LOGI(TAG, "Pet auto-sleep after 60s idle: %s | Animation -> %s",
+                         result != nullptr ? result : "(none)", pet.SuggestEmotion());
+            }
             DisplayLockGuard lock(this);
             if (lock) {
                 RefreshPetPanelLocked();
+                if (just_fell_asleep && pet_feedback_ != nullptr) {
+                    lv_label_set_text(pet_feedback_, "静置 1 分钟，睡着啦 Zzz");
+                    lv_obj_remove_flag(pet_feedback_, LV_OBJ_FLAG_HIDDEN);
+                    pet_feedback_until_us_.store(ui_now + 4000000);
+                }
                 if (pet_feedback_until_us_.load() > 0 &&
                     ui_now > pet_feedback_until_us_.load()) {
                     pet_feedback_until_us_.store(0);
