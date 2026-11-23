@@ -27,8 +27,23 @@ x[54..305] y[26..311]  →  252×286
 v20 稳态日志（`laughing`）：`fps≈20，render≈49ms = decode≈36ms + present≈13ms`。
 
 - 方向 3 只作用于 `present`（合成 + 送屏），**预计 present 下降**；`decode` 是解码/展开图集，不受影响。
-- 由于 decode 占约 73%，整体 fps 提升幅度取决于 present 中合成/送屏的占比，需实机 A/B 确认。
-- **本版本尚未实机刷入验证**，待设备连接后抓取 `Animation fps` 日志对比。若视觉或性能不符合预期，可用下方命令回滚到 v20。
+- 由于 decode 占约 73%，整体 fps 提升幅度取决于 present 中合成/送屏的占比。
+
+### 实机验证（2026-11-24 已刷入）
+
+启动正常：`App version: 2.6.0-grokbot-v21`、`Atlas ready: 360x360`、`Pet panel ready`、无 `assert failed` / `Rebooting`，NVS 保留、Wi-Fi 自动重连、MQTT 连通。视觉与 v20 逐像素一致。
+
+性能 A/B（抓取 `Animation fps` 日志，首页无宠物 UI 叠加、同状态 `notifying`、同时间点约 7 秒，最干净对照）：
+
+| 指标 | v20 | v21 | 变化 |
+| --- | --- | --- | --- |
+| present | 6994 us | 3174 us | **-55%** |
+| render | 32267 us | 23368 us | **-28%** |
+| decode | 25190 us | 20115 us | -20%（波动，非裁剪贡献） |
+
+- 稳态 `laughing`（首页）fps 从 v20 约 19–20 提升到 v21 约 22。
+- 宠物页交互密集时（投喂/玩耍/连续摸角色）present 仍在 16–24ms、fps 18–22，因为角色脏区与底部按钮、环边 strip 重叠——这是 v20 已知的宠物页叠加瓶颈，方向 3 不解决它。
+- decode 是主要瓶颈且不受裁剪影响，所以整体 fps 提升有限（notifying 单点 fps 未变，render 降 28% 但被 30fps 目标与调度掩盖）。
 
 ## 保留的玩法（与 v20 一致）
 
