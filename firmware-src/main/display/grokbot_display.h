@@ -47,7 +47,6 @@ public:
 
 private:
     void InitializePetPanel();
-    void UpdatePetPanelFade();
     void RefreshPetPanelLocked();
     void OnPetAction(int action);
     void NotePetInteraction();
@@ -117,15 +116,13 @@ private:
     lv_obj_t* pet_feedback_values_[4] = {};
     // Four concentric rounded-rectangle progress rings (Apple Watch style).
     lv_obj_t* pet_ring_lines_[4] = {};
-    lv_point_precise_t pet_ring_points_[4][320] = {};
+    lv_point_precise_t pet_ring_points_[4][160] = {};
     // Only 4 on-screen buttons: feed / play / clean / explore.
     lv_obj_t* pet_buttons_[4] = {};
     bool pet_saved_status_visible_ = true;
     bool pet_saved_top_visible_ = true;
     bool pet_saved_bottom_visible_ = true;
     std::atomic<bool> pet_mode_active_{false};
-    std::atomic<bool> pet_fade_in_{false};
-    std::atomic<int> pet_panel_opa_{0};
     std::atomic<int64_t> pet_feedback_until_us_{0};
     std::atomic<bool> pet_ui_refresh_pending_{false};
     std::atomic<int64_t> pet_last_interaction_us_{0};
