@@ -5,7 +5,7 @@
 
 ![GrokBot v25 宣传图](docs/images/promo/grokbot_v25_promo_1920x1080.png)
 
-*1920×1080 宣传图与[样机图](docs/images/promo/grokbot_v25_mockup_1920x1080.png)（同目录含可编辑 HTML 源文件）。*
+*1920×1080 宣传图与[双界面样机图](docs/images/promo/grokbot_v25_mockup_1920x1080.png)（同屏展示宠物模式与小智 AI 桌面；同目录含可编辑 HTML 源文件）。*
 
 ## 这是什么
 
